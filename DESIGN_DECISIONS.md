@@ -17,7 +17,7 @@ CHUNK_OVERLAP = 100  # overlap between chunks
 | Option | Pros | Cons |
 |--------|------|------|
 | **300 words** | More precise retrieval, faster embedding | Loses context, fragments ideas |
-| **500 words** ✅ | Balance of precision + context | - |
+| **500 words**  | Balance of precision + context | - |
 | **800 words** | More context per chunk | Less precise, slower, higher token cost |
 | **1000+ words** | Maximum context | Too broad, degrades retrieval quality |
 
@@ -28,8 +28,8 @@ CHUNK_OVERLAP = 100  # overlap between chunks
 - 800 words: Retrieved irrelevant content alongside relevant
 
 **Trade-off accepted:**
-- ✅ Better: Clear semantic boundaries
-- ❌ Worse: Slightly higher chunk count (more embeddings to store)
+-  Better: Clear semantic boundaries
+-  Worse: Slightly higher chunk count (more embeddings to store)
 
 **Measured impact:**
 - 100-page document → ~800 chunks (at 500 words)
@@ -50,7 +50,7 @@ CHUNK_OVERLAP = 100  # 20% of chunk size
 |---------|------|------|
 | **0 words** | No redundancy, fewer embeddings | Splits context at boundaries |
 | **50 words** | Minimal redundancy | Still loses some boundary context |
-| **100 words** ✅ | Preserves cross-chunk context | 20% storage overhead |
+| **100 words**  | Preserves cross-chunk context | 20% storage overhead |
 | **200 words** | Maximum context preservation | 40% redundancy, diminishing returns |
 
 ### Why 100?
@@ -71,12 +71,12 @@ Chunk 1: "...the contract specifies payment terms. Net 30 days..."
 Chunk 2: "...payment terms. Net 30 days from invoice date. Late fees..."
 
 Query: "What are the payment terms?"
-→ Chunk 1 has complete answer! ✅
+→ Chunk 1 has complete answer! 
 ```
 
 **Trade-off accepted:**
-- ✅ Better: Cross-boundary queries answered correctly
-- ❌ Worse: 20% more embeddings to store
+-  Better: Cross-boundary queries answered correctly
+-  Worse: 20% more embeddings to store
 - **Decision: Correctness > storage efficiency**
 
 ---
@@ -102,7 +102,7 @@ SIMILARITY_THRESHOLD = 0.65
 |-----------|--------------|-------------------|-------|
 | **0.50** | 5% | 12% | Too permissive - hallucinations! |
 | **0.60** | 10% | 3% | Better but still some hallucinations |
-| **0.65** ✅ | 15% | 0% | Sweet spot |
+| **0.65**  | 15% | 0% | Sweet spot |
 | **0.70** | 25% | 0% | Too conservative - valid questions refused |
 | **0.80** | 45% | 0% | Way too strict - unusable |
 
@@ -112,13 +112,13 @@ SIMILARITY_THRESHOLD = 0.65
 2. **Minimize false refusals** (secondary)
 
 **At 0.65:**
-- ✅ 0% hallucination rate (primary goal met)
-- ✅ 15% refusal rate (acceptable - honest "I don't know" better than wrong answer)
-- ✅ 85% of valid questions answered correctly
+-  0% hallucination rate (primary goal met)
+-  15% refusal rate (acceptable - honest "I don't know" better than wrong answer)
+-  85% of valid questions answered correctly
 
 **Trade-off accepted:**
-- ✅ Better: User trust (never lies)
-- ❌ Worse: Some valid questions refused
+-  Better: User trust (never lies)
+-  Worse: Some valid questions refused
 - **Decision: Safety > coverage**
 
 **Production note:**
@@ -158,13 +158,11 @@ TOP_K = 5  # retrieve 5 most similar chunks
 - top_k=10: $6/month (+100% cost for +2% quality)
 
 **Trade-off accepted:**
-- ✅ Better: 85% answer rate, low cost
-- ❌ Worse: Not perfect (87% possible with top_k=10)
+-  Better: 85% answer rate, low cost
+-  Worse: Not perfect (87% possible with top_k=10)
 - **Decision: 5 is optimal cost/quality balance**
 
-**Resume claim:** "Retrieval depth (top-3 to top-5)" ✅ Accurate
 
----
 
 ## 5. In-Memory FAISS (No Persistent Database)
 
@@ -186,9 +184,9 @@ vector_store = VectorStore(dim=384)  # In-memory FAISS
 **Scope constraint:** Single-user, development/demo system
 
 **Requirements:**
-- ✅ Fast retrieval (<50ms)
-- ✅ Simple deployment (no external services)
-- ✅ Good enough for 100 documents
+-  Fast retrieval (<50ms)
+-  Simple deployment (no external services)
+-  Good enough for 100 documents
 
 **FAISS delivers:**
 - Search latency: ~10-20ms (excellent)
@@ -197,8 +195,8 @@ vector_store = VectorStore(dim=384)  # In-memory FAISS
 - Dependencies: Just `faiss-cpu` (9MB package)
 
 **Trade-off accepted:**
-- ✅ Better: Simple, fast, no infrastructure
-- ❌ Worse: Data lost on restart, not horizontally scalable
+-  Better: Simple, fast, no infrastructure
+-  Worse: Data lost on restart, not horizontally scalable
 - **Decision: Simplicity > persistence for v1**
 
 **Production migration path:**
@@ -226,14 +224,14 @@ document_registry: Dict = {}      # In-memory registry
 **Scope:** Portfolio project, not production SaaS
 
 **Single-instance benefits:**
-- ✅ Predictable behavior (no race conditions)
-- ✅ Easy to debug (all state in one process)
-- ✅ No distributed systems complexity
-- ✅ Matches resume claim: "single-instance deployment...to prioritize predictable behavior"
+-  Predictable behavior (no race conditions)
+-  Easy to debug (all state in one process)
+-  No distributed systems complexity
+-  Matches resume claim: "single-instance deployment...to prioritize predictable behavior"
 
 **Trade-off accepted:**
-- ✅ Better: Simple, debuggable, predictable
-- ❌ Worse: Can't handle 1000+ concurrent users
+-  Better: Simple, debuggable, predictable
+-  Worse: Can't handle 1000+ concurrent users
 - **Decision: Correct for current scope**
 
 **Concurrency handling:**
@@ -259,7 +257,7 @@ LLM_MODEL = "gpt-4o-mini"
 | Model | Cost | Speed | Quality | Notes |
 |-------|------|-------|---------|-------|
 | **gpt-3.5-turbo** | Cheapest | Fast | Good | Being deprecated |
-| **gpt-4o-mini** ✅ | Cheap | Fast | Better | Current best value |
+| **gpt-4o-mini**  | Cheap | Fast | Better | Current best value |
 | **gpt-4o** | Expensive | Slower | Best | Overkill for this task |
 | **Claude-3-haiku** | Cheap | Fast | Good | Vendor lock-in |
 
@@ -279,8 +277,8 @@ LLM_MODEL = "gpt-4o-mini"
 - gpt-4o-mini is sufficient
 
 **Trade-off accepted:**
-- ✅ Better: Low cost, fast, good quality
-- ❌ Worse: Not absolute best quality (but 95% is excellent)
+-  Better: Low cost, fast, good quality
+-  Worse: Not absolute best quality (but 95% is excellent)
 - **Decision: gpt-4o-mini is optimal for this use case**
 
 **Production note:**
@@ -312,13 +310,13 @@ temperature=0.2  # Low temperature for factual answers
 | **1.0+** | Creative | Story writing |
 
 **At 0.2:**
-- ✅ Consistent answers (same question → similar answer)
-- ✅ Sticks to context (less hallucination)
-- ✅ Slightly varied wording (not robotic)
+-  Consistent answers (same question → similar answer)
+-  Sticks to context (less hallucination)
+-  Slightly varied wording (not robotic)
 
 **Trade-off accepted:**
-- ✅ Better: Factual, consistent
-- ❌ Worse: Not creative (but we don't want creativity!)
+-  Better: Factual, consistent
+-  Worse: Not creative (but we don't want creativity!)
 - **Decision: 0.2 is perfect for document QA**
 
 ---
@@ -348,8 +346,8 @@ MAX_FILE_SIZE_MB = 10
 - **10MB: Sweet spot** ✅
 
 **Trade-off accepted:**
-- ✅ Better: Handles most real documents
-- ❌ Worse: Very large documents rejected
+-  Better: Handles most real documents
+-  Worse: Very large documents rejected
 - **Decision: 10MB sufficient for 95% of use cases**
 
 ---
@@ -394,8 +392,8 @@ class JSONFormatter(logging.Formatter):
 → Hard to parse programmatically
 
 **Trade-off accepted:**
-- ✅ Better: Structured, parseable, production-ready
-- ❌ Worse: Slightly less human-readable
+-  Better: Structured, parseable, production-ready
+-  Worse: Slightly less human-readable
 - **Decision: JSON is standard for production systems**
 
 ---
@@ -416,15 +414,9 @@ No API keys, no user accounts, no rate limiting in v1.
 - Session management
 - 2-3 weeks of work
 
-**Current scope:**
-- Demonstrate RAG architecture ✅
-- Show system thinking ✅
-- Prove testing ability ✅
-- → Authentication not needed for these goals
-
 **Trade-off accepted:**
-- ✅ Better: Faster to build, simpler to demo
-- ❌ Worse: Not production-ready for public deployment
+-  Better: Faster to build, simpler to demo
+-  Worse: Not production-ready for public deployment
 - **Decision: Defer to v2 when needed**
 
 **Production migration path:**
@@ -444,40 +436,5 @@ No API keys, no user accounts, no rate limiting in v1.
 4. **Debuggability** → JSON logs, request tracing
 5. **Evolvability** → Layered architecture (easy to upgrade)
 
-### Trade-offs Framework
-Every decision optimized for:
-- **Current scope:** Portfolio project, 100 documents, single user
-- **Production path:** Clear migration to scale (documented in ARCHITECTURE.md)
-- **Interview readiness:** Can explain every "why"
-
-### What This Proves
-✅ You think about trade-offs (not just features)  
-✅ You understand constraints (time, cost, scope)  
-✅ You make data-driven decisions (empirical testing)  
-✅ You plan for evolution (architecture supports growth)  
-
-**This is senior-level thinking applied to an entry-level project.**
-
 ---
 
-## For Interviews: How to Use This Document
-
-**When asked:** "Why did you choose X?"
-
-**Answer template:**
-1. State the decision
-2. List alternatives considered
-3. Explain trade-offs
-4. Reference metrics/testing (if applicable)
-5. Acknowledge what you sacrificed
-
-**Example:**
-> "I chose gpt-4o-mini over gpt-4o because testing showed only a 2% quality difference for this task, but gpt-4o costs 16x more. Since the task is context-based QA where the model just needs to extract information, not generate creative content, the cheaper model was sufficient. I accepted slightly lower quality to optimize cost, which is critical at scale."
-
-**This shows:**
-- ✅ You tested alternatives
-- ✅ You measured impact
-- ✅ You understand trade-offs
-- ✅ You think about production constraints
-
-**Every decision in this document can be defended this way.**

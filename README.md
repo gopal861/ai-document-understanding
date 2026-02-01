@@ -10,23 +10,23 @@ Built with a focus on **system design**, **correctness**, and **production think
 
 ##  Key Features
 
-### ✅ Multi-Document Support
+###  Multi-Document Support
 - Upload and query **100+ documents independently**
 - Each document gets unique ID
 - Queries are isolated per document (no cross-contamination)
 
-### ✅ Deterministic Refusal Logic
+###  Deterministic Refusal Logic
 - **Similarity threshold (0.65)** prevents hallucinations
 - System refuses to answer when confidence is low
 - Honest "I don't know" instead of confident lies
 
-### ✅ Production-Grade Architecture
+###  Production-Grade Architecture
 - **Layered design:** API → Workflow → Memory → LLM
 - **Structured logging:** JSON logs with request tracing
 - **Input validation:** Pydantic models, error handling
 - **Performance tuning:** 500-word chunks, top-5 retrieval, ~1-2s latency
 
-### ✅ Comprehensive Testing
+###  Comprehensive Testing
 - **57 test cases** covering API, workflow, and edge cases
 - Tests for concurrent uploads, special characters, boundary conditions
 - Validates refusal logic and multi-document isolation
@@ -268,7 +268,7 @@ MAX_FILE_SIZE_MB = 10
 
 ---
 
-## 🔍 How It Works
+##  How It Works
 
 ### 1. Upload Flow
 ```
@@ -309,7 +309,7 @@ if top_similarity_score < 0.65:
 ### Production Thinking
 - **Similarity thresholds** prevent hallucinations (empirically tuned to 0.65)
 - **Structured logging** is essential (JSON logs saved my life debugging)
-- **Testing** catches bugs before users do (57 tests found 12 issues)
+- **Testing** catches bugs before users do 
 
 ### Trade-offs
 - **In-memory FAISS** → Fast & simple, but not persistent (acceptable for v1)
@@ -324,10 +324,10 @@ if top_similarity_score < 0.65:
 
 These are **intentional scope decisions**, not bugs:
 
-- ✅ **In-memory storage** - Data lost on restart (use persistent DB in production)
-- ✅ **No authentication** - Anyone can use API (add API keys in v2)
-- ✅ **Single instance** - No horizontal scaling (fine for 100 docs)
-- ✅ **No caching** - Same question re-embeds every time (add Redis in v2)
+-  **In-memory storage** - Data lost on restart (use persistent DB in production)
+-  **No authentication** - Anyone can use API (add API keys in v2)
+-  **Single instance** - No horizontal scaling (fine for 100 docs)
+-  **No caching** - Same question re-embeds every time (add Redis in v2)
 
 ---
 
@@ -369,21 +369,6 @@ These are **intentional scope decisions**, not bugs:
 - **[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)** - Trade-offs, alternatives, tuning process
 
 ---
-
-##  Why This Project Matters
-
-This isn't just a "RAG demo" — it's a **production-thinking exercise**:
-
-✅ **System boundaries** (not just LLM calls)  
-✅ **Refusal logic** (safety over coverage)  
-✅ **Testing** (57 tests validate behavior)  
-✅ **Observability** (structured logs, request tracing)  
-✅ **Documentation** (every decision explained)  
-
-
-
----
-
 ## Contributing
 
 This is a portfolio project, but feedback is welcome!
@@ -397,7 +382,7 @@ This is a portfolio project, but feedback is welcome!
 
 ---
 
-## 📄 License
+##  License
 
 MIT License - See LICENSE file for details.
 
@@ -420,11 +405,10 @@ Built as a learning project to understand:
 
 ---
 
-## 📞 Contact
+##  Contact
 
 **Gopal Khandare**  
 AI Engineer (Generative AI & Backend Systems)  
- gkhandare503@gmail.com  
- [LinkedIn](https://linkedin.com/in/your-profile)  
- [GitHub](https://github.com/gopal861)
+[LinkedIn](https://linkedin.com/in/your-profile)  
+[GitHub](https://github.com/gopal861)
 

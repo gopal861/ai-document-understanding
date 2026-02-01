@@ -103,7 +103,7 @@ document_registry[doc_id] = {
 POST /ask
 Content-Type: application/json
 {
-    "document_id": "doc_abc123",
+    "session_id": "doc_abc123",
     "question": "What is the contract effective date?"
 }
 ```
@@ -175,7 +175,7 @@ answer = response.choices[0].message.content
 ```json
 {
     "answer": "The contract effective date is January 15, 2024.",
-    "document_id": "doc_abc123",
+    "session_id": "doc_abc123",
     "confidence_score": 0.87,
     "refused": false,
     "sources_used": 5,
@@ -191,16 +191,16 @@ answer = response.choices[0].message.content
 **Job:** Thin orchestration, validation, error handling
 
 **Does:**
-- ✅ Validates all inputs (Pydantic models)
-- ✅ Checks file types and sizes
-- ✅ Manages document registry
-- ✅ Returns proper HTTP status codes
-- ✅ Logs requests and errors
+-  Validates all inputs (Pydantic models)
+-  Checks file types and sizes
+-  Manages document registry
+-  Returns proper HTTP status codes
+-  Logs requests and errors
 
 **Does NOT:**
-- ❌ Make refusal decisions (that's Workflow layer)
-- ❌ Know about embeddings or similarity (that's Memory layer)
-- ❌ Call LLM directly (that's LLM layer via Workflow)
+-  Make refusal decisions (that's Workflow layer)
+-  Know about embeddings or similarity (that's Memory layer)
+-  Call LLM directly (that's LLM layer via Workflow)
 
 ---
 
@@ -215,13 +215,13 @@ answer = response.choices[0].message.content
 - `retriever.py` - Similarity search with document filtering
 
 **Does:**
-- ✅ Stores multiple documents with isolation (doc_id tagging)
-- ✅ Returns similarity scores (for threshold logic)
-- ✅ Filters retrieval by document ID
+-  Stores multiple documents with isolation (doc_id tagging)
+-  Returns similarity scores (for threshold logic)
+-  Filters retrieval by document ID
 
 **Does NOT:**
-- ❌ Make decisions about refusal (that's Workflow)
-- ❌ Generate answers (that's LLM layer)
+-  Make decisions about refusal (that's Workflow)
+-  Generate answers (that's LLM layer)
 
 ---
 
@@ -240,15 +240,15 @@ else:
 ```
 
 **Does:**
-- ✅ Controls the entire RAG pipeline
-- ✅ Makes refusal decisions (similarity threshold)
-- ✅ Builds prompts with anti-hallucination instructions
-- ✅ Handles LLM failures gracefully
+-  Controls the entire RAG pipeline
+-  Makes refusal decisions (similarity threshold)
+-  Builds prompts with anti-hallucination instructions
+-  Handles LLM failures gracefully
 
 **Does NOT:**
-- ❌ Validate HTTP requests (that's API layer)
-- ❌ Store embeddings (that's Memory layer)
-- ❌ Call OpenAI directly (that's LLM layer)
+-  Validate HTTP requests (that's API layer)
+-  Store embeddings (that's Memory layer)
+-  Call OpenAI directly (that's LLM layer)
 
 ---
 
@@ -256,14 +256,14 @@ else:
 **Job:** Execute prompts, return answers
 
 **Does:**
-- ✅ Calls OpenAI API
-- ✅ Handles API failures
-- ✅ Parses responses
+-  Calls OpenAI API
+-  Handles API failures
+-  Parses responses
 
 **Does NOT:**
-- ❌ Decide what to retrieve (that's Workflow + Memory)
-- ❌ Decide when to refuse (that's Workflow)
-- ❌ Build prompts (that's Workflow)
+-  Decide what to retrieve (that's Workflow + Memory)
+-  Decide when to refuse (that's Workflow)
+-  Build prompts (that's Workflow)
 
 ---
 
@@ -271,10 +271,10 @@ else:
 **Job:** Structured logging, request tracing
 
 **Does:**
-- ✅ JSON-formatted logs
-- ✅ Request ID tracking (trace requests end-to-end)
-- ✅ Latency measurement
-- ✅ Error logging with stack traces
+-  JSON-formatted logs
+-  Request ID tracking (trace requests end-to-end)
+-  Latency measurement
+-  Error logging with stack traces
 
 **Output Example:**
 ```json
@@ -407,11 +407,11 @@ See `DESIGN_DECISIONS.md` for detailed trade-off analysis.
 ## Security Considerations
 
 **Current (v1):**
-- ❌ No authentication
-- ❌ No rate limiting
-- ❌ No input sanitization beyond validation
-- ✅ File size limits (prevent DoS)
-- ✅ File type validation
+-  No authentication
+-  No rate limiting
+-  No input sanitization beyond validation
+-  File size limits (prevent DoS)
+-  File type validation
 
 **Future (Production):**
 - Add API key authentication
@@ -428,7 +428,7 @@ See `DESIGN_DECISIONS.md` for detailed trade-off analysis.
 - Embedding generation: ~100-200ms
 - FAISS search: ~10-50ms (depends on index size)
 - LLM generation: ~800-1500ms (gpt-4o-mini)
-- **Total: ~1-2 seconds** ✅
+- **Total: ~1-2 seconds** 
 
 **Memory:**
 - ~384 floats per chunk (embeddings)
