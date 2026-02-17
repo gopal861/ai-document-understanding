@@ -7,11 +7,9 @@ from typing import Optional, Dict
 
 from openai import OpenAI
 import google.generativeai as genai
-from transformers import pipeline
 
 from app.prompts.system_prompts import (
     DOCUMENT_QA_SYSTEM_PROMPT,
-    LOCAL_MODEL_SYSTEM_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,39 +19,40 @@ class MultiModelLLMClient:
     """
     Production-grade multi-provider LLM client.
 
-    Fallback order (STRICT):
+    Fallback order:
 
     1. OpenAI (primary)
     2. Gemini (secondary)
-    3. Local FLAN-T5 (failsafe)
+
+    Local model removed for deployment memory safety.
 
     Guarantees:
     • Never crashes system
     • Fully observable
     • Provider latency tracking
-    • Failure-safe fallback
+    • Deployment-safe memory usage
     """
+
+    # ============================================================
+    # INIT
+    # ============================================================
 
     def __init__(self):
 
         self.openai: Optional[OpenAI] = None
         self.gemini_model = None
-        self.local_model = None
 
         self.openai_available = False
         self.gemini_available = False
-        self.local_available = False
 
         self._init_openai()
         self._init_gemini()
-        self._init_local()
 
         logger.info(
             "LLM initialization complete",
             extra={
                 "openai_available": self.openai_available,
                 "gemini_available": self.gemini_available,
-                "local_available": self.local_available,
             },
         )
 
@@ -103,7 +102,7 @@ class MultiModelLLMClient:
                 model_name="gemini-1.5-flash"
             )
 
-            # Test call to validate key
+            # Test call
             test = self.gemini_model.generate_content("ping")
 
             if test and test.text:
@@ -123,27 +122,6 @@ class MultiModelLLMClient:
                 extra={"error": str(e)},
             )
 
-    def _init_local(self):
-
-        try:
-
-            self.local_model = pipeline(
-                "text2text-generation",
-                model="google/flan-t5-base",
-                device=-1,
-            )
-
-            self.local_available = True
-
-            logger.info("Local model initialized successfully")
-
-        except Exception as e:
-
-            logger.error(
-                "Local model initialization failed",
-                extra={"error": str(e)},
-            )
-
     # ============================================================
     # PUBLIC API
     # ============================================================
@@ -155,12 +133,14 @@ class MultiModelLLMClient:
             extra={
                 "openai_available": self.openai_available,
                 "gemini_available": self.gemini_available,
-                "local_available": self.local_available,
                 "prompt_length": len(prompt),
             },
         )
 
-        # OpenAI
+        # ====================================================
+        # OpenAI PRIMARY
+        # ====================================================
+
         if self.openai_available:
 
             try:
@@ -178,7 +158,10 @@ class MultiModelLLMClient:
                     extra={"error": str(e)},
                 )
 
-        # Gemini
+        # ====================================================
+        # Gemini FALLBACK
+        # ====================================================
+
         if self.gemini_available:
 
             try:
@@ -196,16 +179,9 @@ class MultiModelLLMClient:
                     extra={"error": str(e)},
                 )
 
-        # Local fallback
-        if self.local_available:
-
-            logger.info("Using local fallback model")
-
-            return self._timed_call(
-                provider="local",
-                fn=self._generate_local,
-                prompt=prompt,
-            )
+        # ====================================================
+        # No providers available
+        # ====================================================
 
         raise RuntimeError("No LLM backend available")
 
@@ -231,9 +207,7 @@ class MultiModelLLMClient:
             max_tokens=500,
         )
 
-        text = response.choices[0].message.content
-
-        return text.strip()
+        return response.choices[0].message.content.strip()
 
     def _generate_gemini(self, prompt: str) -> str:
 
@@ -245,20 +219,6 @@ class MultiModelLLMClient:
             raise RuntimeError("Gemini returned empty response")
 
         return response.text.strip()
-
-    def _generate_local(self, prompt: str) -> str:
-
-        simplified_prompt = (
-            f"{LOCAL_MODEL_SYSTEM_PROMPT}\n\n{prompt[:1000]}"
-        )
-
-        result = self.local_model(
-            simplified_prompt,
-            max_length=512,
-            do_sample=False,
-        )
-
-        return result[0]["generated_text"].strip()
 
     # ============================================================
     # LATENCY OBSERVABILITY
@@ -291,6 +251,5 @@ class MultiModelLLMClient:
         return {
             "openai_available": self.openai_available,
             "gemini_available": self.gemini_available,
-            "local_available": self.local_available,
         }
 
