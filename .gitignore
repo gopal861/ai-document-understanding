@@ -4,6 +4,40 @@ __pycache__/
 
 # Environment variables
 .env
+.env.*
 
 # OS files
 .DS_Store
+Thumbs.db
+
+# Persistent vector storage (DO NOT COMMIT)
+storage/faiss.index
+storage/metadata.json
+
+# Upload files (DO NOT COMMIT)
+storage/uploads/
+
+# Logs
+logs/
+*.log
+
+# Virtual environment
+genai/
+venv/
+.env/
+
+# Evaluation outputs
+evaluation/output/
+evaluation/results/
+
+# Test artifacts
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# Render build artifacts
+*.sqlite3
+*.db
+

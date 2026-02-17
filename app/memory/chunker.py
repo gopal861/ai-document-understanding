@@ -1,55 +1,128 @@
 # app/memory/chunker.py
-from app.config import CHUNK_SIZE, CHUNK_OVERLAP
 
-def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+import logging
+from typing import List
+
+from app.config import (
+    CHUNK_SIZE,
+    CHUNK_OVERLAP,
+    MAX_DOCUMENT_CHARACTERS,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def chunk_text(
+    text: str,
+    size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> List[str]:
     """
-    Split text into overlapping chunks.
-    
-    Uses word-based chunking with overlap to preserve context across boundaries.
-    
-    Args:
-        text: Input text to chunk
-        size: Number of words per chunk (default from config)
-        overlap: Number of words to overlap between chunks (default from config)
-    
-    Returns:
-        List of text chunks
-    
-    Example:
-        >>> text = "word1 word2 word3 word4 word5"
-        >>> chunk_text(text, size=3, overlap=1)
-        ['word1 word2 word3', 'word3 word4 word5']
+    Production-grade bounded chunker.
+
+    Architecture contract preserved:
+    loader → chunker → embedder → vector_store
+
+    Guarantees:
+    • deterministic chunk generation
+    • bounded memory usage
+    • no infinite loops
+    • no empty chunks
+    • production observability
     """
-    if not text or not text.strip():
+
+    # ============================================================
+    # SAFETY CHECKS
+    # ============================================================
+
+    if not text:
+        logger.warning("Chunking skipped: empty text")
         return []
-    
+
+    text = text.strip()
+
+    if not text:
+        logger.warning("Chunking skipped: whitespace text")
+        return []
+
+    # enforce global character limit safety
+    if len(text) > MAX_DOCUMENT_CHARACTERS:
+        logger.warning(
+            "Text exceeds max character limit, truncating",
+            extra={
+                "original_length": len(text),
+                "max_allowed": MAX_DOCUMENT_CHARACTERS,
+            },
+        )
+        text = text[:MAX_DOCUMENT_CHARACTERS]
+
     if size <= 0:
-        raise ValueError(f"Chunk size must be positive, got {size}")
-    
+        raise ValueError(f"Invalid chunk size: {size}")
+
     if overlap < 0:
-        raise ValueError(f"Overlap cannot be negative, got {overlap}")
-    
+        raise ValueError(f"Invalid chunk overlap: {overlap}")
+
     if overlap >= size:
-        raise ValueError(f"Overlap ({overlap}) must be less than chunk size ({size})")
-    
+        raise ValueError(
+            f"Overlap must be smaller than chunk size "
+            f"(overlap={overlap}, size={size})"
+        )
+
+    # ============================================================
+    # TOKENIZATION
+    # ============================================================
+
     words = text.split()
-    
+
     if not words:
+        logger.warning("Chunking skipped: no words found")
         return []
-    
+
+    total_words = len(words)
+
     chunks = []
+
     start = 0
-    
-    while start < len(words):
+
+    step = size - overlap
+
+    # ============================================================
+    # CHUNK GENERATION LOOP
+    # ============================================================
+
+    while start < total_words:
+
         end = start + size
-        chunk = " ".join(words[start:end])
-        chunks.append(chunk)
-        
-        # Move forward by (size - overlap) to create overlap
-        start += size - overlap
-        
-        # Prevent infinite loop if we're at the end
-        if end >= len(words):
+
+        chunk_words = words[start:end]
+
+        if not chunk_words:
             break
-    
+
+        chunk = " ".join(chunk_words).strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        # move forward safely
+        start += step
+
+        # prevent infinite loop
+        if step <= 0:
+            break
+
+    # ============================================================
+    # OBSERVABILITY
+    # ============================================================
+
+    logger.info(
+        "Chunking completed",
+        extra={
+            "total_words": total_words,
+            "chunk_size": size,
+            "overlap": overlap,
+            "chunks_created": len(chunks),
+        },
+    )
+
     return chunks

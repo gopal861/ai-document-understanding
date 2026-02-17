@@ -1,11 +1,12 @@
 # app/memory/retriever.py
 from typing import List, Dict, Optional
+from app.config import TOP_K
 
 def retrieve(
     question: str,
     embedder,
     store,
-    top_k: int = 5,
+    top_k: int =TOP_K,
     doc_id: Optional[str] = None
 ) -> List[Dict]:
     """
@@ -31,4 +32,6 @@ def retrieve(
         doc_id=doc_id
     )
     
-    return results
+
+    return results  
+    

@@ -1,39 +1,13 @@
 # app/workflow/document_qa.py
+
 from typing import Callable, Dict, List
+from app.config import SIMILARITY_THRESHOLD, TOP_K
+import logging
 
-# CRITICAL: Similarity threshold for refusal
-SIMILARITY_THRESHOLD = 0.65
-TOP_K = 5
+# IMPORTANT: Use centralized production prompt builder
+from app.prompts.prompt_builder import build_document_prompt
 
-
-def build_prompt(question: str, context_chunks: List[Dict]) -> str:
-    """
-    Build prompt for LLM with retrieved context.
-    """
-    context_parts = []
-    for i, chunk in enumerate(context_chunks, 1):
-        score = chunk.get("similarity_score", 0.0)
-        text = chunk.get("text", "")
-        context_parts.append(f"[Context {i}, Confidence: {score:.2f}]\n{text}")
-    
-    context = "\n\n".join(context_parts)
-
-    return f"""You are a document understanding assistant.
-
-CRITICAL RULES:
-- Use ONLY the context provided below
-- If the answer is not in the context, say "I don't know based on the document"
-- Do NOT make assumptions or guess
-- Do NOT use external knowledge
-- Be precise and cite specific parts of the context
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer (use only the context above):""".strip()
+logger = logging.getLogger(__name__)
 
 
 def answer_question(
@@ -44,51 +18,83 @@ def answer_question(
     top_k: int = TOP_K,
 ) -> Dict:
     """
-    Answer a question using retrieval-augmented generation with confidence-based refusal.
+    Core document QA workflow.
+
+    Execution steps:
+    1. Retrieve relevant context chunks
+    2. Validate similarity threshold
+    3. Build grounded prompt using centralized prompt builder
+    4. Generate answer via LLM client
+    5. Return structured response with confidence and safety flags
     """
+
+    # Step 1: Retrieve context
     context_chunks = retrieve_fn(question, top_k)
-    
+
+    logger.info(
+    "retrieval_complete",
+    extra={
+        "chunks_retrieved": len(context_chunks),
+        "top_score": context_chunks[0]["similarity_score"] if context_chunks else None,
+        "doc_id": session_id,
+    },
+)
+    # Step 2: Handle no context found
     if not context_chunks:
         return {
-            "answer": "I don't have any information in the document to answer this question.",
+            "answer": "I don't have enough information in the document to answer this.",
             "document_id": session_id,
             "confidence_score": 0.0,
             "refused": True,
             "sources_used": 0,
-            "reasoning": "No relevant context found in document"
+            "reasoning": "No relevant context found",
         }
-    
-    top_similarity = context_chunks[0].get("similarity_score", 0.0)
-    
-    if top_similarity < SIMILARITY_THRESHOLD:
+
+    # Step 3: Similarity threshold safety check
+    top_score = context_chunks[0]["similarity_score"]
+
+    if top_score < SIMILARITY_THRESHOLD:
         return {
-            "answer": f"I don't have enough confident information in the document to answer this question. The most relevant content has only {top_similarity:.2%} confidence, which is below the {SIMILARITY_THRESHOLD:.0%} threshold.",
+            "answer": "Not enough confident information in the document.",
             "document_id": session_id,
-            "confidence_score": top_similarity,
+            "confidence_score": top_score,
             "refused": True,
             "sources_used": len(context_chunks),
-            "reasoning": f"Top similarity score ({top_similarity:.3f}) below threshold ({SIMILARITY_THRESHOLD})"
+            "reasoning": f"Similarity {top_score:.3f} below threshold {SIMILARITY_THRESHOLD}",
         }
-    
-    prompt = build_prompt(question, context_chunks)
-    
+
+    # Step 4: Build grounded prompt and generate answer
     try:
+        prompt = build_document_prompt(
+            question=question,
+            context_chunks=context_chunks,
+            model_type="cloud"
+        )
+
         answer = llm_client.generate(prompt)
+
     except Exception as e:
+        logger.error(
+            "LLM generation failed",
+            extra={"error": str(e)},
+            exc_info=True
+        )
+
         return {
-            "answer": "I encountered an error while processing your question. Please try again.",
+            "answer": "LLM error occurred while generating the answer.",
             "document_id": session_id,
-            "confidence_score": top_similarity,
+            "confidence_score": top_score,
             "refused": True,
             "sources_used": len(context_chunks),
-            "reasoning": f"LLM generation failed: {str(e)}"
+            "reasoning": f"LLM failure: {str(e)}",
         }
-    
+
+    # Step 5: Return successful response
     return {
         "answer": answer,
         "document_id": session_id,
-        "confidence_score": top_similarity,
+        "confidence_score": top_score,
         "refused": False,
         "sources_used": len(context_chunks),
-        "reasoning": None
+        "reasoning": None,
     }

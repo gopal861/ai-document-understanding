@@ -106,11 +106,13 @@ async def startup_event():
     
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        logger.warning(
-            "missing_api_key",
-            extra={"message": "OPENAI_API_KEY not set. API calls will fail."}
-        )
-        print("WARNING: OPENAI_API_KEY not set. Set it with: export OPENAI_API_KEY='sk-...'")
+      logger.warning(
+       "missing_api_key",
+        extra={"warning_detail": "OPENAI_API_KEY not set. API calls will fail."}
+)
+
+    
+
     
     print("=" * 50)
     print("AI Document Understanding API Started")
