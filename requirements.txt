@@ -8,9 +8,6 @@ numpy==1.26.4
 faiss-cpu==1.13.2
 
 
-sentence-transformers==3.0.1
-transformers==4.44.2
-torch==2.4.1
 
 openai==1.51.0
 google-generativeai==0.7.2
