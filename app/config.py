@@ -21,9 +21,7 @@ ALLOWED_FILE_EXTENSIONS = [".pdf"]
 # ========== EMBEDDING CONFIGURATION ==========
 
 # Embedding model
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-
+EMBEDDING_MODEL = "text-embedding-3-small"
 
 # ========== RETRIEVAL CONFIGURATION ==========
 
@@ -66,21 +64,7 @@ MAX_CHUNKS_PER_DOCUMENT = 500 # Prevent memory exhaustion from huge documents
 
 # ========== DESIGN TRADE-OFFS (DOCUMENTED) ==========
 
-"""
-TRADE-OFF DECISIONS:
 
-
-
-1. In-memory FAISS (not persistent DB):
-   - Trade-off: Fast retrieval, simple deployment
-   - Limitation: Data lost on restart, limited to single instance
-   
-
-2. Single-instance deployment:
-   - Trade-off: Predictable behavior, easier debugging
-   - Limitation: No horizontal scaling
-   
-"""
 
 # ============================================================
 # INGESTION SAFETY LIMITS

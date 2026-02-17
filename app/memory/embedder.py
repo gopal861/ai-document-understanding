@@ -13,15 +13,14 @@ Guarantees:
 • Batched processing for performance
 • Fully observable via logs
 • Safe bounded memory usage
+• Deployment-safe (no local model memory)
 """
 
 import logging
 import numpy as np
 from typing import List
 
-from sentence_transformers import SentenceTransformer
-DEFAULT_EMBED_BATCH_SIZE = 32
-
+from openai import OpenAI
 
 from app.config import (
     EMBEDDING_MODEL,
@@ -30,14 +29,7 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================
-# CONFIGURATION (SAFE DEFAULT)
-# ============================================================
-
-# Optimal batch size for CPU systems
-# Safe for laptops and small servers
-
+DEFAULT_EMBED_BATCH_SIZE = 32
 
 
 class Embedder:
@@ -45,7 +37,7 @@ class Embedder:
     Production-safe embedding generator.
 
     Responsibilities:
-    • Load embedding model
+    • Call OpenAI embedding API
     • Generate normalized embeddings
     • Batch processing for speed
     • Enforce system limits
@@ -65,14 +57,23 @@ class Embedder:
 
         try:
 
-            self._model = SentenceTransformer(EMBEDDING_MODEL)
+            # Initialize OpenAI client
+            self._client = OpenAI()
 
-            self._dimension = (
-                self._model.get_sentence_embedding_dimension()
-            )
+            # Set dimension based on model
+            if EMBEDDING_MODEL == "text-embedding-3-small":
+                self._dimension = 1536
+
+            elif EMBEDDING_MODEL == "text-embedding-3-large":
+                self._dimension = 3072
+
+            else:
+                raise ValueError(
+                    f"Unsupported embedding model: {EMBEDDING_MODEL}"
+                )
 
             logger.info(
-                "Embedding model loaded",
+                "Embedding model initialized",
                 extra={
                     "model": EMBEDDING_MODEL,
                     "dimension": self._dimension,
@@ -87,7 +88,7 @@ class Embedder:
             )
 
             raise RuntimeError(
-                f"Failed to load embedding model: {e}"
+                f"Failed to initialize embedding model: {e}"
             )
 
     # ============================================================
@@ -149,14 +150,24 @@ class Embedder:
 
                 batch = texts[start:end]
 
-                batch_embeddings = self._model.encode(
-                    batch,
-                    convert_to_numpy=True,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
+                response = self._client.embeddings.create(
+                    model=EMBEDDING_MODEL,
+                    input=batch,
                 )
 
-                batch_embeddings = batch_embeddings.astype("float32")
+                batch_embeddings = np.array(
+                    [item.embedding for item in response.data],
+                    dtype="float32"
+                )
+
+                # Normalize for cosine similarity
+                norms = np.linalg.norm(
+                    batch_embeddings,
+                    axis=1,
+                    keepdims=True
+                )
+
+                batch_embeddings = batch_embeddings / norms
 
                 all_embeddings.append(batch_embeddings)
 
@@ -210,5 +221,6 @@ class Embedder:
         return {
             "model": EMBEDDING_MODEL,
             "dimension": self._dimension,
+            "provider": "openai",
             "status": "healthy"
         }

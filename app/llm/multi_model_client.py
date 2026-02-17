@@ -6,7 +6,7 @@ import time
 from typing import Optional, Dict
 
 from openai import OpenAI
-import google.generativeai as genai
+from google import genai
 
 from app.prompts.system_prompts import (
     DOCUMENT_QA_SYSTEM_PROMPT,
@@ -24,13 +24,12 @@ class MultiModelLLMClient:
     1. OpenAI (primary)
     2. Gemini (secondary)
 
-    Local model removed for deployment memory safety.
-
     Guarantees:
     • Never crashes system
     • Fully observable
     • Provider latency tracking
     • Deployment-safe memory usage
+    • Uses latest Google GenAI SDK
     """
 
     # ============================================================
@@ -40,7 +39,7 @@ class MultiModelLLMClient:
     def __init__(self):
 
         self.openai: Optional[OpenAI] = None
-        self.gemini_model = None
+        self.gemini_client: Optional[genai.Client] = None
 
         self.openai_available = False
         self.gemini_available = False
@@ -57,7 +56,7 @@ class MultiModelLLMClient:
         )
 
     # ============================================================
-    # INITIALIZATION
+    # OPENAI INIT
     # ============================================================
 
     def _init_openai(self):
@@ -85,6 +84,10 @@ class MultiModelLLMClient:
                 extra={"error": str(e)},
             )
 
+    # ============================================================
+    # GEMINI INIT (NEW SDK SAFE)
+    # ============================================================
+
     def _init_gemini(self):
 
         try:
@@ -96,14 +99,14 @@ class MultiModelLLMClient:
                 logger.warning("Gemini API key missing")
                 return
 
-            genai.configure(api_key=key)
+            # Correct initialization
+            self.gemini_client = genai.Client(api_key=key)
 
-            self.gemini_model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash"
+            # Test call (very small)
+            test = self.gemini_client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents="ping"
             )
-
-            # Test call
-            test = self.gemini_model.generate_content("ping")
 
             if test and test.text:
 
@@ -179,14 +182,10 @@ class MultiModelLLMClient:
                     extra={"error": str(e)},
                 )
 
-        # ====================================================
-        # No providers available
-        # ====================================================
-
         raise RuntimeError("No LLM backend available")
 
     # ============================================================
-    # PROVIDERS
+    # OPENAI GENERATION
     # ============================================================
 
     def _generate_openai(self, prompt: str) -> str:
@@ -209,10 +208,15 @@ class MultiModelLLMClient:
 
         return response.choices[0].message.content.strip()
 
+    # ============================================================
+    # GEMINI GENERATION (NEW SDK SAFE)
+    # ============================================================
+
     def _generate_gemini(self, prompt: str) -> str:
 
-        response = self.gemini_model.generate_content(
-            f"{DOCUMENT_QA_SYSTEM_PROMPT}\n\n{prompt}"
+        response = self.gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=f"{DOCUMENT_QA_SYSTEM_PROMPT}\n\n{prompt}"
         )
 
         if not response or not response.text:
@@ -221,7 +225,7 @@ class MultiModelLLMClient:
         return response.text.strip()
 
     # ============================================================
-    # LATENCY OBSERVABILITY
+    # LATENCY TRACKING
     # ============================================================
 
     def _timed_call(self, provider: str, fn, prompt: str):
@@ -252,4 +256,3 @@ class MultiModelLLMClient:
             "openai_available": self.openai_available,
             "gemini_available": self.gemini_available,
         }
-
