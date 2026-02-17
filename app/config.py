@@ -21,7 +21,8 @@ ALLOWED_FILE_EXTENSIONS = [".pdf"]
 # ========== EMBEDDING CONFIGURATION ==========
 
 # Embedding model
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
 
 
 # ========== RETRIEVAL CONFIGURATION ==========
