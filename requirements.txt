@@ -17,3 +17,6 @@ pypdf==6.7.0
 
 python-dotenv==1.2.1
 
+qdrant-client==1.9.1
+
+
