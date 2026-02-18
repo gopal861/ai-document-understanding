@@ -5,35 +5,26 @@ import numpy as np
 import logging
 import os
 import json
+import uuid
+
 from typing import List, Dict, Optional
+
+from qdrant_client.http.models import PointStruct
 
 from app.config import (
     MAX_CHUNKS_PER_DOCUMENT,
     MAX_DOCUMENTS_IN_MEMORY,
     TOP_K,
+    QDRANT_COLLECTION,
 )
+
+from app.memory.qdrant_client import QdrantVectorDB
+
 
 logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """
-    Production-grade FAISS cosine similarity vector store.
-
-    Architecture contract preserved:
-    embedder → vector_store → retriever → LLM
-
-    Guarantees:
-    • bounded memory growth
-    • safe ingestion limits
-    • stable similarity ranking
-    • production observability
-    • retrieval correctness
-    """
-
-    # ============================================================
-    # PERSISTENCE PATHS (NEW)
-    # ============================================================
 
     _INDEX_PATH = "storage/faiss.index"
     _METADATA_PATH = "storage/metadata.json"
@@ -49,25 +40,24 @@ class VectorStore:
 
         self._dim = dim
 
-        # chunk metadata
         self._chunks: List[Dict] = []
 
-        # document → chunk count
         self._doc_chunk_count: Dict[str, int] = {}
 
-        # index will be loaded from disk if exists
         self._index = None
 
-        # attempt load
+        # Initialize Qdrant backend
+        self._qdrant = QdrantVectorDB(dim)
+
+        # Load FAISS fallback
         self._load_from_disk()
 
-        # create new index if none exists
         if self._index is None:
 
             self._index = faiss.IndexFlatIP(dim)
 
             logger.info(
-                "New FAISS index created",
+                "New FAISS fallback index created",
                 extra={"dimension": dim},
             )
 
@@ -75,12 +65,12 @@ class VectorStore:
             "VectorStore initialized",
             extra={
                 "dimension": dim,
-                "vectors_loaded": self._index.ntotal,
+                "faiss_vectors": self._index.ntotal,
             },
         )
 
     # ============================================================
-    # PERSISTENCE LOAD (NEW)
+    # LOAD FROM DISK
     # ============================================================
 
     def _load_from_disk(self):
@@ -117,7 +107,10 @@ class VectorStore:
 
                 self._chunks = data.get("chunks", [])
 
-                self._doc_chunk_count = data.get("doc_chunk_count", {})
+                self._doc_chunk_count = data.get(
+                    "doc_chunk_count",
+                    {},
+                )
 
                 logger.info(
                     "Metadata loaded",
@@ -132,7 +125,7 @@ class VectorStore:
                 )
 
     # ============================================================
-    # PERSISTENCE SAVE (NEW)
+    # SAVE TO DISK
     # ============================================================
 
     def _save_to_disk(self):
@@ -154,7 +147,7 @@ class VectorStore:
                 )
 
             logger.info(
-                "VectorStore persisted",
+                "FAISS fallback persisted",
                 extra={"vectors": self._index.ntotal},
             )
 
@@ -166,7 +159,7 @@ class VectorStore:
             )
 
     # ============================================================
-    # INTERNAL SAFETY
+    # VALIDATION
     # ============================================================
 
     def _ensure_numpy(self, embeddings) -> np.ndarray:
@@ -175,25 +168,27 @@ class VectorStore:
             raise ValueError("Embeddings cannot be None")
 
         if isinstance(embeddings, list):
-            embeddings = np.array(embeddings, dtype="float32")
 
-        if not isinstance(embeddings, np.ndarray):
-            raise TypeError("Embeddings must be numpy array or list")
+            embeddings = np.array(
+                embeddings,
+                dtype="float32",
+            )
 
         if embeddings.ndim != 2:
             raise ValueError("Embeddings must be 2D")
 
         if embeddings.shape[1] != self._dim:
-            raise ValueError(
-                f"Embedding dimension mismatch. "
-                f"Expected {self._dim}, got {embeddings.shape[1]}"
-            )
+            raise ValueError("Embedding dimension mismatch")
 
         return embeddings
 
-    def _normalize(self, vectors: np.ndarray) -> np.ndarray:
+    def _normalize(self, vectors: np.ndarray):
 
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = np.linalg.norm(
+            vectors,
+            axis=1,
+            keepdims=True,
+        )
 
         return vectors / np.clip(norms, 1e-10, None)
 
@@ -206,74 +201,101 @@ class VectorStore:
         embeddings,
         chunks: List[str],
         doc_id: str,
-    ) -> None:
-
-        if not doc_id:
-            raise ValueError("doc_id required")
-
-        if not chunks:
-            raise ValueError("No chunks provided")
+    ):
 
         embeddings = self._ensure_numpy(embeddings)
 
-        if len(chunks) != embeddings.shape[0]:
-            raise ValueError(
-                "Chunks count and embeddings count mismatch"
-            )
-
-        if doc_id not in self._doc_chunk_count:
-
-            if len(self._doc_chunk_count) >= MAX_DOCUMENTS_IN_MEMORY:
-
-                raise ValueError(
-                    f"Max documents limit reached "
-                    f"({MAX_DOCUMENTS_IN_MEMORY})"
-                )
+        embeddings = self._normalize(
+            embeddings.astype("float32")
+        )
 
         existing_chunks = self._doc_chunk_count.get(doc_id, 0)
 
-        incoming_chunks = len(chunks)
+        start_idx = len(self._chunks)
 
-        if existing_chunks + incoming_chunks > MAX_CHUNKS_PER_DOCUMENT:
+        # ========================================================
+        # Store in Qdrant Cloud (BATCH SAFE)
+        # ========================================================
 
-            raise ValueError(
-                f"Max chunks per document exceeded "
-                f"({MAX_CHUNKS_PER_DOCUMENT})"
+        points = []
+
+        for i, embedding in enumerate(embeddings):
+
+            global_idx = start_idx + i
+
+            points.append(
+
+                PointStruct(
+
+                    id=str(uuid.uuid4()),
+
+                    vector=embedding.tolist(),
+
+                    payload={
+
+                        "text": chunks[i],
+
+                        "doc_id": doc_id,
+
+                        "chunk_idx": existing_chunks + i,
+
+                        "global_idx": global_idx,
+
+                    },
+
+                )
+
             )
 
-        embeddings = embeddings.astype("float32")
+        BATCH_SIZE = 16
 
-        embeddings = self._normalize(embeddings)
+        for i in range(0, len(points), BATCH_SIZE):
 
-        start_idx = len(self._chunks)
+            batch = points[i:i + BATCH_SIZE]
+
+            self._qdrant._client.upsert(
+
+                collection_name=QDRANT_COLLECTION,
+
+                points=batch,
+
+            )
+
+        # ========================================================
+        # Store in FAISS fallback
+        # ========================================================
 
         self._index.add(embeddings)
 
         for i, chunk in enumerate(chunks):
 
             self._chunks.append({
+
                 "text": chunk,
+
                 "doc_id": doc_id,
+
                 "chunk_idx": existing_chunks + i,
+
                 "global_idx": start_idx + i,
+
             })
 
         self._doc_chunk_count[doc_id] = (
-            existing_chunks + incoming_chunks
+
+            existing_chunks + len(chunks)
+
         )
+
+        self._save_to_disk()
 
         logger.info(
-            "Document indexed",
+            "Document indexed successfully",
             extra={
                 "doc_id": doc_id,
-                "chunks_added": incoming_chunks,
-                "total_chunks": self._doc_chunk_count[doc_id],
-                "total_vectors": self._index.ntotal,
+                "vectors": len(chunks),
             },
         )
-
-        # SAVE PERSISTENCE (NEW)
-        self._save_to_disk()
 
     # ============================================================
     # QUERY
@@ -282,82 +304,73 @@ class VectorStore:
     def query(
         self,
         embedding,
-        top_k: int = TOP_K,
-        doc_id: Optional[str] = None,
-        deleted_docs: Optional[set] = None,
-    ) -> List[Dict]:
-
-        if self._index.ntotal == 0:
-            logger.warning("Query on empty vector store")
-            return []
+        top_k=TOP_K,
+        doc_id=None,
+        deleted_docs=None,
+    ):
 
         embedding = self._ensure_numpy(embedding)
 
-        embedding = embedding.astype("float32")
+        embedding = self._normalize(
+            embedding.astype("float32")
+        )
 
-        embedding = self._normalize(embedding)
+        response = self._qdrant._client.query_points(
 
-        scores, indices = self._index.search(
-            embedding,
-            min(top_k * 5, self._index.ntotal),
+            collection_name=QDRANT_COLLECTION,
+
+            query=embedding[0].tolist(),
+
+            limit=top_k,
+
         )
 
         results = []
 
-        for score, idx in zip(scores[0], indices[0]):
+        for hit in response.points:
 
-            if idx < 0 or idx >= len(self._chunks):
+            payload = hit.payload
+
+            if deleted_docs and payload["doc_id"] in deleted_docs:
                 continue
 
-            chunk = self._chunks[idx]
-
-            if deleted_docs and chunk["doc_id"] in deleted_docs:
-                continue
-
-            if doc_id and chunk["doc_id"] != doc_id:
+            if doc_id and payload["doc_id"] != doc_id:
                 continue
 
             results.append({
-                "text": chunk["text"],
-                "doc_id": chunk["doc_id"],
-                "chunk_idx": chunk["chunk_idx"],
-                "similarity_score": float(score),
+
+                "text": payload["text"],
+
+                "doc_id": payload["doc_id"],
+
+                "chunk_idx": payload["chunk_idx"],
+
+                "similarity_score": float(hit.score),
+
             })
-
-            if len(results) >= top_k:
-                break
-
-        logger.info(
-            "Vector query executed",
-            extra={
-                "doc_id": doc_id,
-                "results_returned": len(results),
-                "top_score": results[0]["similarity_score"]
-                if results else None,
-            },
-        )
 
         return results
 
     # ============================================================
-    # OBSERVABILITY
+    # STATS
     # ============================================================
 
-    def get_stats(self) -> Dict:
+    def get_stats(self):
 
         return {
+
             "total_chunks": len(self._chunks),
+
             "total_vectors": self._index.ntotal,
+
             "documents": dict(self._doc_chunk_count),
+
         }
 
-    def document_exists(self, doc_id: str) -> bool:
+    def document_exists(self, doc_id):
 
         return doc_id in self._doc_chunk_count
 
-    def document_count(self) -> int:
+    def document_count(self):
 
         return len(self._doc_chunk_count)
-
-
-

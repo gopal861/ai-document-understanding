@@ -8,6 +8,13 @@ Changes here affect system behavior without code modifications.
 
 # ========== DOCUMENT PROCESSING ==========
 
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
 # Chunk configuration (matches resume: "chunk sizes 500-800 tokens")
 CHUNK_SIZE = 700  # words per chunk
 
@@ -74,6 +81,16 @@ MAX_CHUNKS_PER_DOCUMENT = 500 # Prevent memory exhaustion from huge documents
 MAX_DOCUMENT_CHARACTERS = 2_000_000
 # Maximum HTML pages to crawl
 MAX_HTML_PAGES = 20
+
+
+# ============================================================
+# QDRANT CONFIGURATION
+# ============================================================
+
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "documents")
+
 
 # Allowed domains for URL ingestion
 ALLOWED_DOMAINS = {

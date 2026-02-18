@@ -8,8 +8,9 @@ import uuid
 
 from app.api.routes import router
 from app.observability.logger import setup_logging, get_logger
+from app.observability.metrics import metrics_tracker  # NEW
 
-# Initialize logging FIRST (before anything else)
+# Initialize logging FIRST
 setup_logging(log_level="INFO")
 logger = get_logger(__name__)
 
@@ -20,10 +21,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware (allows UI to call API)
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,14 +34,14 @@ app.add_middleware(
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    Middleware to log all HTTP requests with latency tracking.
-    
-    Adds request_id to all requests for tracing.
+    Middleware to log all HTTP requests with latency tracking
+    AND record production metrics safely.
     """
+
     # Generate unique request ID
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
-    
+
     # Log request start
     logger.info(
         "request_started",
@@ -51,14 +52,18 @@ async def log_requests(request: Request, call_next):
             "client_ip": request.client.host if request.client else None
         }
     )
-    
-    # Track latency
+
     start_time = time.time()
-    
+
     try:
+
         response = await call_next(request)
+
         latency = time.time() - start_time
-        
+
+        # NEW: Record success metrics
+        metrics_tracker.record_success(latency)
+
         # Log request completion
         logger.info(
             "request_completed",
@@ -70,12 +75,16 @@ async def log_requests(request: Request, call_next):
                 "latency_seconds": round(latency, 3)
             }
         )
-        
+
         return response
-    
+
     except Exception as e:
+
         latency = time.time() - start_time
-        
+
+        # NEW: Record failure metrics
+        metrics_tracker.record_failure()
+
         # Log request error
         logger.error(
             "request_failed",
@@ -89,7 +98,7 @@ async def log_requests(request: Request, call_next):
             },
             exc_info=True
         )
-        
+
         raise
 
 
@@ -99,21 +108,19 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    Validate environment and log startup information.
-    """
+
     logger.info("application_startup", extra={"version": "1.0.0"})
-    
-    # Check for OpenAI API key
+
     if not os.getenv("OPENAI_API_KEY"):
-      logger.warning(
-       "missing_api_key",
-        extra={"warning_detail": "OPENAI_API_KEY not set. API calls will fail."}
-)
 
-    
+        logger.warning(
+            "missing_api_key",
+            extra={
+                "warning_detail":
+                "OPENAI_API_KEY not set. API calls will fail."
+            }
+        )
 
-    
     print("=" * 50)
     print("AI Document Understanding API Started")
     print("=" * 50)
@@ -123,6 +130,7 @@ async def startup_event():
     print("  GET  /documents        - List all documents")
     print("  DELETE /documents/{id} - Delete a document")
     print("  GET  /health           - Health check")
+    print("  GET  /metrics          - System metrics")  # NEW
     print("=" * 50)
     print("Logs: logs/app.log (JSON format)")
     print("=" * 50)
@@ -130,17 +138,15 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Log application shutdown."""
+
     logger.info("application_shutdown")
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """
-    Catch-all exception handler to prevent 500 errors from crashing the app.
-    """
+
     request_id = getattr(request.state, "request_id", "unknown")
-    
+
     logger.error(
         "unhandled_exception",
         extra={
@@ -151,7 +157,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
         exc_info=True
     )
-    
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -164,12 +170,11 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/")
 async def root():
-    """
-    Root endpoint - API information.
-    """
+
     return {
         "message": "AI Document Understanding API",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "metrics": "/metrics"
     }

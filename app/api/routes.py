@@ -4,10 +4,14 @@ import shutil
 import logging
 import time
 import threading
+import os
+import json
 
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
+from app.observability.metrics import metrics_tracker
+
 
 from app.models import (
     AskRequest,
@@ -50,13 +54,89 @@ vector_store = VectorStore(
 llm_client = MultiModelLLMClient()
 
 
-# document metadata registry
+# ============================================================
+# DOCUMENT REGISTRY (NOW PERSISTENT)
+# ============================================================
+
+DOCUMENT_REGISTRY_PATH = "storage/document_registry.json"
+
 document_registry: Dict[str, dict] = {}
 
 
+def load_document_registry():
+
+    global document_registry
+
+    if os.path.exists(DOCUMENT_REGISTRY_PATH):
+
+        try:
+
+            with open(DOCUMENT_REGISTRY_PATH, "r") as f:
+
+                data = json.load(f)
+
+                # restore datetime safely
+                for doc_id, meta in data.items():
+
+                    if "upload_timestamp" in meta:
+
+                        meta["upload_timestamp"] = datetime.fromisoformat(
+                            meta["upload_timestamp"]
+                        )
+
+                document_registry.update(data)
+
+                logger.info(
+                    "Document registry loaded",
+                    extra={"documents": len(document_registry)},
+                )
+
+        except Exception as e:
+
+            logger.error(
+                "Document registry load failed",
+                extra={"error": str(e)},
+            )
+
+
+def save_document_registry():
+
+    try:
+
+        os.makedirs("storage", exist_ok=True)
+
+        serializable = {}
+
+        for doc_id, meta in document_registry.items():
+
+            serializable[doc_id] = {
+
+                "filename": meta["filename"],
+
+                "chunks_count": meta["chunks_count"],
+
+                "upload_timestamp": meta["upload_timestamp"].isoformat(),
+
+            }
+
+        with open(DOCUMENT_REGISTRY_PATH, "w") as f:
+
+            json.dump(serializable, f)
+
+    except Exception as e:
+
+        logger.error(
+            "Document registry save failed",
+            extra={"error": str(e)},
+        )
+
+
+# Load registry on startup
+load_document_registry()
+
+
 # ============================================================
-# INGESTION LOCK (CRITICAL FOR SAFETY)
-# Prevents concurrent writes to FAISS index
+# INGESTION LOCK
 # ============================================================
 
 ingestion_lock = threading.Lock()
@@ -161,7 +241,7 @@ def health_check():
 
 
 # ============================================================
-# UPLOAD (SAFE INGESTION WITH LOCK)
+# UPLOAD
 # ============================================================
 
 @router.post("/upload", response_model=UploadResponse)
@@ -182,10 +262,6 @@ async def upload_document(
     start_time = time.time()
 
     try:
-
-        # ====================================================
-        # LOAD TEXT
-        # ====================================================
 
         if url:
 
@@ -209,18 +285,12 @@ async def upload_document(
 
             text = load_text_with_retry(str(file_path))
 
-
         if not text or not text.strip():
 
             raise HTTPException(
                 status_code=400,
                 detail="No text extracted",
             )
-
-
-        # ====================================================
-        # CHUNK
-        # ====================================================
 
         chunks = chunk_text(text)
 
@@ -231,17 +301,7 @@ async def upload_document(
                 detail="No chunks created",
             )
 
-
-        # ====================================================
-        # EMBED
-        # ====================================================
-
         embeddings = embedder.embed(chunks)
-
-
-        # ====================================================
-        # STORE (LOCK PROTECTED)
-        # ====================================================
 
         with ingestion_lock:
 
@@ -250,11 +310,6 @@ async def upload_document(
                 chunks=chunks,
                 doc_id=document_id,
             )
-
-
-        # ====================================================
-        # REGISTER
-        # ====================================================
 
         document_registry[document_id] = {
 
@@ -265,9 +320,10 @@ async def upload_document(
             "upload_timestamp": datetime.utcnow(),
         }
 
+        # SAVE REGISTRY (NEW SAFE PERSISTENCE)
+        save_document_registry()
 
         latency = time.time() - start_time
-
 
         logger.info(
             "Document ingestion complete",
@@ -278,18 +334,14 @@ async def upload_document(
             },
         )
 
-
         return UploadResponse(
             document_id=document_id,
             filename=filename,
             chunks_created=len(chunks),
         )
 
-
     except HTTPException:
-
         raise
-
 
     except Exception as e:
 
@@ -308,7 +360,7 @@ async def upload_document(
 
 
 # ============================================================
-# ASK (SAFE — READ ONLY, NO LOCK NEEDED)
+# ASK
 # ============================================================
 
 @router.post("/ask", response_model=AskResponse)
@@ -321,7 +373,6 @@ def ask_question(payload: AskRequest):
             detail="Document not found",
         )
 
-
     def retrieve_fn(question: str, top_k: int):
 
         return retrieve(
@@ -332,14 +383,12 @@ def ask_question(payload: AskRequest):
             doc_id=payload.document_id,
         )
 
-
     result = answer_question(
         question=payload.question,
         session_id=payload.document_id,
         retrieve_fn=retrieve_fn,
         llm_client=llm_client,
     )
-
 
     return AskResponse(**result)
 
@@ -351,25 +400,28 @@ def ask_question(payload: AskRequest):
 @router.get("/documents", response_model=ListDocumentsResponse)
 def list_documents():
 
-    documents = [
+    documents = []
 
-        DocumentInfo(
-            document_id=doc_id,
-            filename=meta["filename"],
-            chunks_count=meta["chunks_count"],
-            upload_timestamp=meta["upload_timestamp"],
+    for doc_id, meta in document_registry.items():
+
+        upload_timestamp = meta.get("upload_timestamp")
+
+        documents.append(
+
+            DocumentInfo(
+                document_id=doc_id,
+                filename=meta["filename"],
+                chunks_count=meta["chunks_count"],
+                upload_timestamp=str(upload_timestamp) if upload_timestamp else None,
+            )
+
         )
-
-        for doc_id, meta in document_registry.items()
-
-    ]
 
     return ListDocumentsResponse(
         documents=documents,
         total_documents=len(documents),
         total_chunks=sum(d.chunks_count for d in documents),
     )
-
 
 # ============================================================
 # DELETE DOCUMENT
@@ -387,6 +439,9 @@ def delete_document(document_id: str):
         )
 
     del document_registry[document_id]
+
+    # SAVE REGISTRY AFTER DELETE
+    save_document_registry()
 
     logger.info(
         "Document deleted",
@@ -408,3 +463,17 @@ def delete_document(document_id: str):
 def model_status():
 
     return llm_client.get_usage_stats()
+
+# ============================================================
+# METRICS ENDPOINT (PRODUCTION OBSERVABILITY)
+# ============================================================
+
+@router.get("/metrics")
+def get_metrics():
+    """
+    Returns system-wide production metrics.
+
+    Used for monitoring, dashboards, and resume metrics extraction.
+    """
+
+    return metrics_tracker.get_metrics()
