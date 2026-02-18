@@ -6,11 +6,10 @@ import os
 import time
 import uuid
 
-from app.api.routes import router
+from app.api.routes import router, load_document_registry
 from app.observability.logger import setup_logging, get_logger
-from app.observability.metrics import metrics_tracker 
-from app.api.routes import load_document_registry
- # NEW
+from app.observability.metrics import metrics_tracker
+from app.observability.posthog_client import posthog_client   # NEW
 
 # Initialize logging FIRST
 setup_logging(log_level="INFO")
@@ -37,12 +36,22 @@ app.add_middleware(
 async def log_requests(request: Request, call_next):
     """
     Middleware to log all HTTP requests with latency tracking
-    AND record production metrics safely.
+    AND record production metrics safely
+    AND register tracing in PostHog.
     """
 
     # Generate unique request ID
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
+
+    # NEW: Register request identity in PostHog (SAFE)
+    posthog_client.identify_user(
+        distinct_id=request_id,
+        properties={
+            "entry_point": request.url.path,
+            "method": request.method,
+        },
+    )
 
     # Log request start
     logger.info(
@@ -63,7 +72,7 @@ async def log_requests(request: Request, call_next):
 
         latency = time.time() - start_time
 
-        # NEW: Record success metrics
+        # Record success metrics
         metrics_tracker.record_success(latency)
 
         # Log request completion
@@ -84,8 +93,16 @@ async def log_requests(request: Request, call_next):
 
         latency = time.time() - start_time
 
-        # NEW: Record failure metrics
+        # Record failure metrics
         metrics_tracker.record_failure()
+
+        # Track error in PostHog (SAFE)
+        posthog_client.track_error(
+            distinct_id=request_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            endpoint=request.url.path,
+        )
 
         # Log request error
         logger.error(
@@ -134,7 +151,7 @@ async def startup_event():
     print("  GET  /documents        - List all documents")
     print("  DELETE /documents/{id} - Delete a document")
     print("  GET  /health           - Health check")
-    print("  GET  /metrics          - System metrics")  # NEW
+    print("  GET  /metrics          - System metrics")
     print("=" * 50)
     print("Logs: logs/app.log (JSON format)")
     print("=" * 50)
@@ -160,6 +177,14 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error_type": type(exc).__name__
         },
         exc_info=True
+    )
+
+    # Track global exception in PostHog
+    posthog_client.track_error(
+        distinct_id=request_id,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+        endpoint=request.url.path,
     )
 
     return JSONResponse(
