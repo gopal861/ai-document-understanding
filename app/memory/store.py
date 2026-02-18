@@ -1,5 +1,3 @@
-# app/memory/store.py
-
 import faiss
 import numpy as np
 import logging
@@ -193,7 +191,7 @@ class VectorStore:
         return vectors / np.clip(norms, 1e-10, None)
 
     # ============================================================
-    # ADD DOCUMENT
+    # ADD DOCUMENT (FIXED — SINGLE BULK UPSERT)
     # ============================================================
 
     def add(
@@ -212,10 +210,6 @@ class VectorStore:
         existing_chunks = self._doc_chunk_count.get(doc_id, 0)
 
         start_idx = len(self._chunks)
-
-        # ========================================================
-        # Store in Qdrant Cloud (BATCH SAFE)
-        # ========================================================
 
         points = []
 
@@ -247,24 +241,16 @@ class VectorStore:
 
             )
 
-        BATCH_SIZE = 16
+        # SINGLE BULK UPSERT (CRITICAL FIX FOR LATENCY)
+        self._qdrant._client.upsert(
 
-        for i in range(0, len(points), BATCH_SIZE):
+            collection_name=QDRANT_COLLECTION,
 
-            batch = points[i:i + BATCH_SIZE]
+            points=points,
 
-            self._qdrant._client.upsert(
+        )
 
-                collection_name=QDRANT_COLLECTION,
-
-                points=batch,
-
-            )
-
-        # ========================================================
         # Store in FAISS fallback
-        # ========================================================
-
         self._index.add(embeddings)
 
         for i, chunk in enumerate(chunks):
@@ -298,7 +284,7 @@ class VectorStore:
         )
 
     # ============================================================
-    # QUERY
+    # QUERY (FIXED FOR QDRANT CLIENT 1.16.2)
     # ============================================================
 
     def query(
@@ -329,21 +315,21 @@ class VectorStore:
 
         for hit in response.points:
 
-            payload = hit.payload
+            payload = hit.payload or {}
 
-            if deleted_docs and payload["doc_id"] in deleted_docs:
+            if deleted_docs and payload.get("doc_id") in deleted_docs:
                 continue
 
-            if doc_id and payload["doc_id"] != doc_id:
+            if doc_id and payload.get("doc_id") != doc_id:
                 continue
 
             results.append({
 
-                "text": payload["text"],
+                "text": payload.get("text"),
 
-                "doc_id": payload["doc_id"],
+                "doc_id": payload.get("doc_id"),
 
-                "chunk_idx": payload["chunk_idx"],
+                "chunk_idx": payload.get("chunk_idx"),
 
                 "similarity_score": float(hit.score),
 
