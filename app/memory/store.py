@@ -191,7 +191,7 @@ class VectorStore:
         return vectors / np.clip(norms, 1e-10, None)
 
     # ============================================================
-    # ADD DOCUMENT (FIXED — SINGLE BULK UPSERT)
+    # ADD DOCUMENT
     # ============================================================
 
     def add(
@@ -241,7 +241,7 @@ class VectorStore:
 
             )
 
-        # SINGLE BULK UPSERT (CRITICAL FIX FOR LATENCY)
+        # BULK UPSERT (FAST)
         self._qdrant._client.upsert(
 
             collection_name=QDRANT_COLLECTION,
@@ -250,7 +250,7 @@ class VectorStore:
 
         )
 
-        # Store in FAISS fallback
+        # FAISS fallback
         self._index.add(embeddings)
 
         for i, chunk in enumerate(chunks):
@@ -301,11 +301,12 @@ class VectorStore:
             embedding.astype("float32")
         )
 
-        response = self._qdrant._client.query_points(
+        # CORRECT METHOD FOR 1.16.2
+        hits = self._qdrant._client.search(
 
             collection_name=QDRANT_COLLECTION,
 
-            query=embedding[0].tolist(),
+            query_vector=embedding[0].tolist(),
 
             limit=top_k,
 
@@ -313,7 +314,7 @@ class VectorStore:
 
         results = []
 
-        for hit in response.points:
+        for hit in hits:
 
             payload = hit.payload or {}
 
@@ -360,3 +361,4 @@ class VectorStore:
     def document_count(self):
 
         return len(self._doc_chunk_count)
+

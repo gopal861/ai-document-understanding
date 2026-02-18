@@ -8,7 +8,9 @@ import uuid
 
 from app.api.routes import router
 from app.observability.logger import setup_logging, get_logger
-from app.observability.metrics import metrics_tracker  # NEW
+from app.observability.metrics import metrics_tracker 
+from app.api.routes import load_document_registry
+ # NEW
 
 # Initialize logging FIRST
 setup_logging(log_level="INFO")
@@ -108,6 +110,8 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def startup_event():
+
+    load_document_registry()
 
     logger.info("application_startup", extra={"version": "1.0.0"})
 
