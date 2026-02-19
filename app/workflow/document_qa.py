@@ -3,9 +3,13 @@
 from typing import Callable, Dict, List
 from app.config import SIMILARITY_THRESHOLD, TOP_K
 import logging
+import time  # NEW
 
 # IMPORTANT: Use centralized production prompt builder
 from app.prompts.prompt_builder import build_document_prompt
+
+# NEW — PostHog tracking
+from app.observability.posthog_client import posthog_client
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +32,33 @@ def answer_question(
     5. Return structured response with confidence and safety flags
     """
 
+    workflow_start = time.time()  # NEW
+
     # Step 1: Retrieve context
     context_chunks = retrieve_fn(question, top_k)
 
+    top_score = (
+        context_chunks[0]["similarity_score"]
+        if context_chunks else None
+    )
+
     logger.info(
-    "retrieval_complete",
-    extra={
-        "chunks_retrieved": len(context_chunks),
-        "top_score": context_chunks[0]["similarity_score"] if context_chunks else None,
-        "doc_id": session_id,
-    },
-)
+        "retrieval_complete",
+        extra={
+            "chunks_retrieved": len(context_chunks),
+            "top_score": top_score,
+            "doc_id": session_id,
+        },
+    )
+
+    # NEW — Track retrieval in PostHog
+    posthog_client.track_retrieval(
+        distinct_id=session_id,
+        document_id=session_id,
+        chunks_retrieved=len(context_chunks),
+        top_score=top_score,
+    )
+
     # Step 2: Handle no context found
     if not context_chunks:
         return {
@@ -51,8 +71,6 @@ def answer_question(
         }
 
     # Step 3: Similarity threshold safety check
-    top_score = context_chunks[0]["similarity_score"]
-
     if top_score < SIMILARITY_THRESHOLD:
         return {
             "answer": "Not enough confident information in the document.",
@@ -65,6 +83,8 @@ def answer_question(
 
     # Step 4: Build grounded prompt and generate answer
     try:
+        llm_start = time.time()  # NEW
+
         prompt = build_document_prompt(
             question=question,
             context_chunks=context_chunks,
@@ -73,7 +93,32 @@ def answer_question(
 
         answer = llm_client.generate(prompt)
 
+        llm_latency = time.time() - llm_start  # NEW
+        workflow_latency = time.time() - workflow_start  # NEW
+
+        # NEW — Track LLM completion event
+        posthog_client._track(
+            distinct_id=session_id,
+            event="llm_completed",
+            properties={
+                "document_id": session_id,
+                "latency_seconds": llm_latency,
+                "workflow_latency_seconds": workflow_latency,
+                "question_length": len(question),
+                "chunks_used": len(context_chunks),
+                "top_score": top_score,
+            },
+        )
+
     except Exception as e:
+
+        posthog_client.track_error(
+            distinct_id=session_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            endpoint="llm_generation",
+        )
+
         logger.error(
             "LLM generation failed",
             extra={"error": str(e)},
@@ -98,3 +143,4 @@ def answer_question(
         "sources_used": len(context_chunks),
         "reasoning": None,
     }
+
