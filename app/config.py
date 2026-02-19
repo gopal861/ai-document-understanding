@@ -93,10 +93,18 @@ QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "documents")
 
 
 # Allowed domains for URL ingestion
-ALLOWED_DOMAINS = {
+
+ALLOWED_DOMAINS = [
+
+    "github.com",
+    "raw.githubusercontent.com",
+
     "platform.openai.com",
     "ai.google.dev",
-    "docs.anthropic.com",
-    "huggingface.co",
-    "github.com",
-}
+
+    "docs.python.org",
+    "fastapi.tiangolo.com",
+    "huggingface.co" ,
+    "docs.anthropic.com"
+
+]
