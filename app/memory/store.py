@@ -7,7 +7,7 @@ import uuid
 
 from typing import List, Dict, Optional
 
-from qdrant_client.http.models import PointStruct
+from qdrant_client.http.models import PointStruct, ScrollRequest
 
 from app.config import (
     MAX_CHUNKS_PER_DOCUMENT,
@@ -44,10 +44,10 @@ class VectorStore:
 
         self._index = None
 
-        # Initialize Qdrant backend
+        # Qdrant backend
         self._qdrant = QdrantVectorDB(dim)
 
-        # Load FAISS fallback
+        # Try disk restore first
         self._load_from_disk()
 
         if self._index is None:
@@ -55,17 +55,118 @@ class VectorStore:
             self._index = faiss.IndexFlatIP(dim)
 
             logger.info(
-                "New FAISS fallback index created",
+                "New FAISS index created",
                 extra={"dimension": dim},
             )
+
+        # CRITICAL FIX: rebuild from Qdrant if RAM empty
+        if len(self._chunks) == 0:
+
+            logger.info("Rebuilding state from Qdrant")
+
+            self._rebuild_from_qdrant()
 
         logger.info(
             "VectorStore initialized",
             extra={
                 "dimension": dim,
-                "faiss_vectors": self._index.ntotal,
+                "chunks": len(self._chunks),
+                "vectors": self._index.ntotal,
+                "documents": len(self._doc_chunk_count),
             },
         )
+
+    # ============================================================
+    # REBUILD FROM QDRANT (CRITICAL FIX)
+    # ============================================================
+
+    def _rebuild_from_qdrant(self):
+
+        try:
+
+            scroll_offset = None
+
+            total = 0
+
+            while True:
+
+                result = self._qdrant._client.scroll(
+                    collection_name=QDRANT_COLLECTION,
+                    scroll_filter=None,
+                    limit=100,
+                    offset=scroll_offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+
+                points = result[0]
+                scroll_offset = result[1]
+
+                if not points:
+                    break
+
+                vectors = []
+
+                for point in points:
+
+                    payload = point.payload or {}
+
+                    text = payload.get("text")
+                    doc_id = payload.get("doc_id")
+                    chunk_idx = payload.get("chunk_idx")
+
+                    if text is None or doc_id is None:
+                        continue
+
+                    vector = point.vector
+
+                    vectors.append(vector)
+
+                    self._chunks.append({
+
+                        "text": text,
+                        "doc_id": doc_id,
+                        "chunk_idx": chunk_idx,
+                        "global_idx": len(self._chunks),
+
+                    })
+
+                    self._doc_chunk_count[doc_id] = (
+                        self._doc_chunk_count.get(doc_id, 0) + 1
+                    )
+
+                if vectors:
+
+                    vectors_np = np.array(vectors, dtype="float32")
+
+                    vectors_np = self._normalize(vectors_np)
+
+                    self._index.add(vectors_np)
+
+                    total += len(vectors)
+
+                if scroll_offset is None:
+                    break
+
+            if total > 0:
+
+                logger.info(
+                    "Rebuilt from Qdrant",
+                    extra={
+                        "vectors_loaded": total,
+                        "documents": len(self._doc_chunk_count),
+                    },
+                )
+
+                self._save_to_disk()
+
+        except Exception as e:
+
+            logger.error(
+                "Qdrant rebuild failed",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
 
     # ============================================================
     # LOAD FROM DISK
@@ -145,7 +246,7 @@ class VectorStore:
                 )
 
             logger.info(
-                "FAISS fallback persisted",
+                "Persisted locally",
                 extra={"vectors": self._index.ntotal},
             )
 
@@ -162,21 +263,12 @@ class VectorStore:
 
     def _ensure_numpy(self, embeddings) -> np.ndarray:
 
-        if embeddings is None:
-            raise ValueError("Embeddings cannot be None")
-
         if isinstance(embeddings, list):
 
             embeddings = np.array(
                 embeddings,
                 dtype="float32",
             )
-
-        if embeddings.ndim != 2:
-            raise ValueError("Embeddings must be 2D")
-
-        if embeddings.shape[1] != self._dim:
-            raise ValueError("Embedding dimension mismatch")
 
         return embeddings
 
@@ -191,66 +283,36 @@ class VectorStore:
         return vectors / np.clip(norms, 1e-10, None)
 
     # ============================================================
-    # ADD DOCUMENT
+    # ADD
     # ============================================================
 
-    def add(
-        self,
-        embeddings,
-        chunks: List[str],
-        doc_id: str,
-    ):
+    def add(self, embeddings, chunks: List[str], doc_id: str):
 
         embeddings = self._ensure_numpy(embeddings)
 
-        embeddings = self._normalize(
-            embeddings.astype("float32")
-        )
-
-        existing_chunks = self._doc_chunk_count.get(doc_id, 0)
-
-        start_idx = len(self._chunks)
+        embeddings = self._normalize(embeddings)
 
         points = []
 
-        for i, embedding in enumerate(embeddings):
-
-            global_idx = start_idx + i
+        for i, vector in enumerate(embeddings):
 
             points.append(
-
                 PointStruct(
-
                     id=str(uuid.uuid4()),
-
-                    vector=embedding.tolist(),
-
+                    vector=vector.tolist(),
                     payload={
-
                         "text": chunks[i],
-
                         "doc_id": doc_id,
-
-                        "chunk_idx": existing_chunks + i,
-
-                        "global_idx": global_idx,
-
+                        "chunk_idx": i,
                     },
-
                 )
-
             )
 
-        # BULK UPSERT (FAST)
         self._qdrant._client.upsert(
-
             collection_name=QDRANT_COLLECTION,
-
             points=points,
-
         )
 
-        # FAISS fallback
         self._index.add(embeddings)
 
         for i, chunk in enumerate(chunks):
@@ -258,50 +320,25 @@ class VectorStore:
             self._chunks.append({
 
                 "text": chunk,
-
                 "doc_id": doc_id,
-
-                "chunk_idx": existing_chunks + i,
-
-                "global_idx": start_idx + i,
+                "chunk_idx": i,
 
             })
 
-        self._doc_chunk_count[doc_id] = (
-
-            existing_chunks + len(chunks)
-
-        )
+        self._doc_chunk_count[doc_id] = len(chunks)
 
         self._save_to_disk()
 
-        logger.info(
-            "Document indexed successfully",
-            extra={
-                "doc_id": doc_id,
-                "vectors": len(chunks),
-            },
-        )
-
     # ============================================================
-    # QUERY (FIXED FOR QDRANT CLIENT 1.16.2)
+    # QUERY
     # ============================================================
 
-    def query(
-        self,
-        embedding,
-        top_k=TOP_K,
-        doc_id=None,
-        deleted_docs=None,
-    ):
+    def query(self, embedding, top_k=TOP_K, doc_id=None):
 
         embedding = self._ensure_numpy(embedding)
 
-        embedding = self._normalize(
-            embedding.astype("float32")
-        )
+        embedding = self._normalize(embedding)
 
-        # CORRECT METHOD FOR 1.16.2
         hits = self._qdrant._client.search(
 
             collection_name=QDRANT_COLLECTION,
@@ -317,9 +354,6 @@ class VectorStore:
         for hit in hits:
 
             payload = hit.payload or {}
-
-            if deleted_docs and payload.get("doc_id") in deleted_docs:
-                continue
 
             if doc_id and payload.get("doc_id") != doc_id:
                 continue
@@ -354,11 +388,6 @@ class VectorStore:
 
         }
 
-    def document_exists(self, doc_id):
-
-        return doc_id in self._doc_chunk_count
-
     def document_count(self):
 
         return len(self._doc_chunk_count)
-
