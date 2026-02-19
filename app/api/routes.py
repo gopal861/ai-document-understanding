@@ -181,6 +181,10 @@ def validate_file_size(content: bytes):
         )
 
 
+# ============================================================
+# FIXED FUNCTION (ONLY CHANGE)
+# ============================================================
+
 def load_text_with_retry(source: str) -> str:
 
     last_error = None
@@ -199,8 +203,13 @@ def load_text_with_retry(source: str) -> str:
 
             text = load_text(source)
 
-            if text:
+            # FIX: ensure silent failures are handled
+            if text and text.strip():
                 return text
+
+            last_error = Exception(
+                f"No text extracted from source: {source}"
+            )
 
         except Exception as e:
 
@@ -217,7 +226,10 @@ def load_text_with_retry(source: str) -> str:
 
         time.sleep(INGESTION_RETRY_DELAY)
 
-    raise last_error
+    # FIX: always raise valid exception object
+    raise Exception(
+        f"Document load failed after {INGESTION_MAX_RETRIES} attempts. Source: {source}. Error: {last_error}"
+    )
 
 
 # ============================================================
@@ -468,4 +480,5 @@ def delete_document(document_id: str):
 def get_metrics():
 
     return metrics_tracker.get_metrics()
+
 
