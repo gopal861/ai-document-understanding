@@ -11,7 +11,7 @@ Supports:
 - GitHub repositories
 - Raw markdown URLs
 - Static HTML docs
-- Dynamic JS-rendered docs (Playwright fallback)
+- Dynamic JS-rendered docs (Playwright fallback — FIXED THREAD SAFE)
 """
 
 from pypdf import PdfReader
@@ -20,6 +20,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 import os
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from playwright.sync_api import sync_playwright
 
@@ -28,6 +30,13 @@ from app.config import (
     MAX_DOCUMENT_CHARACTERS,
     MAX_HTML_PAGES,
 )
+
+
+# ============================================================
+# THREAD EXECUTOR (CRITICAL FIX)
+# ============================================================
+
+_playwright_executor = ThreadPoolExecutor(max_workers=2)
 
 
 # ============================================================
@@ -88,7 +97,7 @@ def load_markdown_text(file_path: str) -> str:
 
 
 # ============================================================
-# RAW MARKDOWN URL LOADER (FAST PATH)
+# RAW MARKDOWN URL LOADER
 # ============================================================
 
 def load_raw_markdown_url(source: str) -> str:
@@ -156,18 +165,10 @@ def load_html_docs_recursive(base_url: str) -> str:
 
 
 # ============================================================
-# PLAYWRIGHT DYNAMIC DOC LOADER (NEW SAFE FALLBACK)
+# PLAYWRIGHT CORE FUNCTION (THREAD SAFE)
 # ============================================================
 
-def load_dynamic_html_playwright(url: str) -> str:
-    """
-    Used only when static HTML extraction fails.
-
-    Safe for Render Free and HuggingFace:
-    - launches browser lazily
-    - closes immediately
-    - respects character limits
-    """
+def _playwright_fetch(url: str) -> str:
 
     with sync_playwright() as p:
 
@@ -189,6 +190,19 @@ def load_dynamic_html_playwright(url: str) -> str:
         tag.decompose()
 
     text = soup.get_text(separator="\n").strip()
+
+    return text
+
+
+# ============================================================
+# THREAD SAFE PLAYWRIGHT LOADER
+# ============================================================
+
+def load_dynamic_html_playwright(url: str) -> str:
+
+    future = _playwright_executor.submit(_playwright_fetch, url)
+
+    text = future.result(timeout=60)
 
     return enforce_character_limit(text)
 
@@ -252,10 +266,8 @@ def load_text(source: str) -> str:
         if domain == "github.com":
             return load_github_repo_markdown(source)
 
-        # try fast static loader first
         text = load_html_docs_recursive(source)
 
-        # fallback to Playwright if empty
         if not text or len(text.strip()) < 500:
             text = load_dynamic_html_playwright(source)
 
@@ -268,4 +280,5 @@ def load_text(source: str) -> str:
         return load_markdown_text(source)
 
     raise ValueError(f"Unsupported source: {source}")
+
 
