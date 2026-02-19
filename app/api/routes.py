@@ -1,6 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
 import uuid
-import shutil
 import logging
 import time
 import threading
@@ -10,8 +9,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
-from app.observability.metrics import metrics_tracker
 
+from app.observability.metrics import metrics_tracker
+from app.observability.posthog_client import posthog_client
 
 from app.models import (
     AskRequest,
@@ -42,7 +42,7 @@ router = APIRouter()
 
 
 # ============================================================
-# GLOBAL SINGLETONS (ARCHITECTURE CONTRACT)
+# GLOBAL SINGLETONS (ARCHITECTURE CONTRACT PRESERVED)
 # ============================================================
 
 embedder = Embedder()
@@ -55,7 +55,7 @@ llm_client = MultiModelLLMClient()
 
 
 # ============================================================
-# DOCUMENT REGISTRY (NOW PERSISTENT)
+# DOCUMENT REGISTRY (PERSISTENT)
 # ============================================================
 
 DOCUMENT_REGISTRY_PATH = "storage/document_registry.json"
@@ -67,36 +67,43 @@ def load_document_registry():
 
     global document_registry
 
-    if os.path.exists(DOCUMENT_REGISTRY_PATH):
+    if not os.path.exists(DOCUMENT_REGISTRY_PATH):
+        logger.info("Document registry file not found. Starting fresh.")
+        return
 
-        try:
+    try:
 
-            with open(DOCUMENT_REGISTRY_PATH, "r") as f:
+        with open(DOCUMENT_REGISTRY_PATH, "r") as f:
+            data = json.load(f)
 
-                data = json.load(f)
+        restored = {}
 
-                # restore datetime safely
-                for doc_id, meta in data.items():
+        for doc_id, meta in data.items():
 
-                    if "upload_timestamp" in meta:
+            timestamp = meta.get("upload_timestamp")
 
-                        meta["upload_timestamp"] = datetime.fromisoformat(
-                            meta["upload_timestamp"]
-                        )
+            if timestamp:
+                try:
+                    meta["upload_timestamp"] = datetime.fromisoformat(timestamp)
+                except Exception:
+                    meta["upload_timestamp"] = None
 
-                document_registry.update(data)
+            restored[doc_id] = meta
 
-                logger.info(
-                    "Document registry loaded",
-                    extra={"documents": len(document_registry)},
-                )
+        document_registry.clear()
+        document_registry.update(restored)
 
-        except Exception as e:
+        logger.info(
+            "Document registry loaded",
+            extra={"documents": len(document_registry)}
+        )
 
-            logger.error(
-                "Document registry load failed",
-                extra={"error": str(e)},
-            )
+    except Exception as e:
+
+        logger.error(
+            "Document registry load failed",
+            extra={"error": str(e)}
+        )
 
 
 def save_document_registry():
@@ -109,25 +116,25 @@ def save_document_registry():
 
         for doc_id, meta in document_registry.items():
 
+            timestamp = meta.get("upload_timestamp")
+
             serializable[doc_id] = {
-
-                "filename": meta["filename"],
-
-                "chunks_count": meta["chunks_count"],
-
-                "upload_timestamp": meta["upload_timestamp"].isoformat(),
-
+                "filename": meta.get("filename"),
+                "chunks_count": meta.get("chunks_count"),
+                "upload_timestamp":
+                    timestamp.isoformat() if isinstance(timestamp, datetime) else None,
             }
 
         with open(DOCUMENT_REGISTRY_PATH, "w") as f:
-
             json.dump(serializable, f)
+
+        logger.info("Document registry saved")
 
     except Exception as e:
 
         logger.error(
             "Document registry save failed",
-            extra={"error": str(e)},
+            extra={"error": str(e)}
         )
 
 
@@ -136,7 +143,7 @@ load_document_registry()
 
 
 # ============================================================
-# INGESTION LOCK
+# INGESTION LOCK (CRITICAL SAFETY)
 # ============================================================
 
 ingestion_lock = threading.Lock()
@@ -168,7 +175,6 @@ def validate_file_size(content: bytes):
     size_mb = len(content) / (1024 * 1024)
 
     if size_mb > MAX_FILE_SIZE_MB:
-
         raise HTTPException(
             status_code=413,
             detail=f"File too large: {size_mb:.2f}MB",
@@ -223,15 +229,6 @@ def health_check():
 
     stats = vector_store.get_stats()
 
-    logger.info(
-        "Health check",
-        extra={
-            "documents": len(stats["documents"]),
-            "chunks": stats["total_chunks"],
-            "vectors": stats["total_vectors"],
-        },
-    )
-
     return HealthResponse(
         status="healthy",
         total_documents=len(stats["documents"]),
@@ -241,11 +238,12 @@ def health_check():
 
 
 # ============================================================
-# UPLOAD
+# UPLOAD DOCUMENT
 # ============================================================
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(None),
     url: str = Form(None),
 ):
@@ -266,7 +264,6 @@ async def upload_document(
         if url:
 
             filename = url
-
             text = load_text_with_retry(url)
 
         else:
@@ -278,28 +275,16 @@ async def upload_document(
             file_path = UPLOAD_DIR / f"{document_id}.pdf"
 
             with file_path.open("wb") as buffer:
-
                 buffer.write(file_bytes)
 
             filename = file.filename
 
             text = load_text_with_retry(str(file_path))
 
-        if not text or not text.strip():
-
-            raise HTTPException(
-                status_code=400,
-                detail="No text extracted",
-            )
+        if not text:
+            raise HTTPException(status_code=400, detail="No text extracted")
 
         chunks = chunk_text(text)
-
-        if not chunks:
-
-            raise HTTPException(
-                status_code=400,
-                detail="No chunks created",
-            )
 
         embeddings = embedder.embed(chunks)
 
@@ -312,26 +297,26 @@ async def upload_document(
             )
 
         document_registry[document_id] = {
-
             "filename": filename,
-
             "chunks_count": len(chunks),
-
             "upload_timestamp": datetime.utcnow(),
         }
 
-        # SAVE REGISTRY (NEW SAFE PERSISTENCE)
         save_document_registry()
 
         latency = time.time() - start_time
 
         logger.info(
             "Document ingestion complete",
-            extra={
-                "doc_id": document_id,
-                "chunks": len(chunks),
-                "latency_seconds": latency,
-            },
+            extra={"doc_id": document_id}
+        )
+
+        posthog_client.track_document_upload(
+            distinct_id=request.state.request_id,
+            document_id=document_id,
+            filename=filename,
+            chunks=len(chunks),
+            latency=latency,
         )
 
         return UploadResponse(
@@ -340,57 +325,84 @@ async def upload_document(
             chunks_created=len(chunks),
         )
 
-    except HTTPException:
-        raise
-
     except Exception as e:
 
-        logger.error(
-            "Document ingestion failed",
-            extra={
-                "doc_id": document_id,
-                "error": str(e),
-            },
+        posthog_client.track_error(
+            distinct_id=request.state.request_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            endpoint="/upload",
         )
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
+        raise
 
 
 # ============================================================
-# ASK
+# ASK QUESTION
 # ============================================================
 
 @router.post("/ask", response_model=AskResponse)
-def ask_question(payload: AskRequest):
+def ask_question(payload: AskRequest, request: Request):
 
-    if payload.document_id not in document_registry:
+    start_time = time.time()
 
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
+    try:
+
+        if payload.document_id not in document_registry:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found",
+            )
+
+        def retrieve_fn(question: str, top_k: int):
+
+            results = retrieve(
+                question=question,
+                embedder=embedder,
+                store=vector_store,
+                top_k=top_k,
+                doc_id=payload.document_id,
+            )
+
+            posthog_client.track_retrieval(
+                distinct_id=request.state.request_id,
+                document_id=payload.document_id,
+                chunks_retrieved=len(results),
+                top_score=results[0]["similarity_score"] if results else None,
+            )
+
+            return results
+
+        result = answer_question(
+            question=payload.question,
+            session_id=payload.document_id,
+            retrieve_fn=retrieve_fn,
+            llm_client=llm_client,
         )
 
-    def retrieve_fn(question: str, top_k: int):
+        latency = time.time() - start_time
 
-        return retrieve(
-            question=question,
-            embedder=embedder,
-            store=vector_store,
-            top_k=top_k,
-            doc_id=payload.document_id,
+        posthog_client.track_question(
+            distinct_id=request.state.request_id,
+            document_id=payload.document_id,
+            question=payload.question,
+            latency=latency,
+            success=True,
         )
 
-    result = answer_question(
-        question=payload.question,
-        session_id=payload.document_id,
-        retrieve_fn=retrieve_fn,
-        llm_client=llm_client,
-    )
+        return AskResponse(**result)
 
-    return AskResponse(**result)
+    except Exception as e:
+
+        posthog_client.track_error(
+            distinct_id=request.state.request_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            endpoint="/ask",
+        )
+
+        raise
 
 
 # ============================================================
@@ -404,17 +416,15 @@ def list_documents():
 
     for doc_id, meta in document_registry.items():
 
-        upload_timestamp = meta.get("upload_timestamp")
+        timestamp = meta.get("upload_timestamp")
 
         documents.append(
-
             DocumentInfo(
                 document_id=doc_id,
-                filename=meta["filename"],
-                chunks_count=meta["chunks_count"],
-                upload_timestamp=str(upload_timestamp) if upload_timestamp else None,
+                filename=meta.get("filename"),
+                chunks_count=meta.get("chunks_count"),
+                upload_timestamp=str(timestamp) if timestamp else None,
             )
-
         )
 
     return ListDocumentsResponse(
@@ -422,6 +432,7 @@ def list_documents():
         total_documents=len(documents),
         total_chunks=sum(d.chunks_count for d in documents),
     )
+
 
 # ============================================================
 # DELETE DOCUMENT
@@ -440,13 +451,7 @@ def delete_document(document_id: str):
 
     del document_registry[document_id]
 
-    # SAVE REGISTRY AFTER DELETE
     save_document_registry()
-
-    logger.info(
-        "Document deleted",
-        extra={"doc_id": document_id},
-    )
 
     return DeleteDocumentResponse(
         document_id=document_id,
@@ -456,24 +461,11 @@ def delete_document(document_id: str):
 
 
 # ============================================================
-# MODEL STATUS
-# ============================================================
-
-@router.get("/model-status")
-def model_status():
-
-    return llm_client.get_usage_stats()
-
-# ============================================================
-# METRICS ENDPOINT (PRODUCTION OBSERVABILITY)
+# METRICS ENDPOINT
 # ============================================================
 
 @router.get("/metrics")
 def get_metrics():
-    """
-    Returns system-wide production metrics.
-
-    Used for monitoring, dashboards, and resume metrics extraction.
-    """
 
     return metrics_tracker.get_metrics()
+
