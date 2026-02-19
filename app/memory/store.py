@@ -7,7 +7,7 @@ import uuid
 
 from typing import List, Dict, Optional
 
-from qdrant_client.http.models import PointStruct, ScrollRequest
+from qdrant_client.http.models import PointStruct
 
 from app.config import (
     MAX_CHUNKS_PER_DOCUMENT,
@@ -37,21 +37,17 @@ class VectorStore:
             raise ValueError("Embedding dimension must be positive")
 
         self._dim = dim
-
         self._chunks: List[Dict] = []
-
         self._doc_chunk_count: Dict[str, int] = {}
-
         self._index = None
 
         # Qdrant backend
         self._qdrant = QdrantVectorDB(dim)
 
-        # Try disk restore first
+        # Load local persistence
         self._load_from_disk()
 
         if self._index is None:
-
             self._index = faiss.IndexFlatIP(dim)
 
             logger.info(
@@ -59,7 +55,7 @@ class VectorStore:
                 extra={"dimension": dim},
             )
 
-        # CRITICAL FIX: rebuild from Qdrant if RAM empty
+        # CRITICAL FIX: rebuild RAM from Qdrant if empty
         if len(self._chunks) == 0:
 
             logger.info("Rebuilding state from Qdrant")
@@ -77,7 +73,7 @@ class VectorStore:
         )
 
     # ============================================================
-    # REBUILD FROM QDRANT (CRITICAL FIX)
+    # REBUILD FROM QDRANT
     # ============================================================
 
     def _rebuild_from_qdrant(self):
@@ -85,22 +81,17 @@ class VectorStore:
         try:
 
             scroll_offset = None
-
-            total = 0
+            total_vectors = 0
 
             while True:
 
-                result = self._qdrant._client.scroll(
+                points, scroll_offset = self._qdrant._client.scroll(
                     collection_name=QDRANT_COLLECTION,
-                    scroll_filter=None,
                     limit=100,
                     offset=scroll_offset,
                     with_payload=True,
                     with_vectors=True,
                 )
-
-                points = result[0]
-                scroll_offset = result[1]
 
                 if not points:
                     break
@@ -118,17 +109,15 @@ class VectorStore:
                     if text is None or doc_id is None:
                         continue
 
-                    vector = point.vector
+                    vector = np.array(point.vector, dtype="float32")
 
                     vectors.append(vector)
 
                     self._chunks.append({
-
                         "text": text,
                         "doc_id": doc_id,
                         "chunk_idx": chunk_idx,
                         "global_idx": len(self._chunks),
-
                     })
 
                     self._doc_chunk_count[doc_id] = (
@@ -137,23 +126,23 @@ class VectorStore:
 
                 if vectors:
 
-                    vectors_np = np.array(vectors, dtype="float32")
+                    vectors_np = np.vstack(vectors)
 
                     vectors_np = self._normalize(vectors_np)
 
                     self._index.add(vectors_np)
 
-                    total += len(vectors)
+                    total_vectors += len(vectors)
 
                 if scroll_offset is None:
                     break
 
-            if total > 0:
+            if total_vectors > 0:
 
                 logger.info(
-                    "Rebuilt from Qdrant",
+                    "Rebuild completed",
                     extra={
-                        "vectors_loaded": total,
+                        "vectors_loaded": total_vectors,
                         "documents": len(self._doc_chunk_count),
                     },
                 )
@@ -201,15 +190,10 @@ class VectorStore:
             try:
 
                 with open(self._METADATA_PATH, "r") as f:
-
                     data = json.load(f)
 
                 self._chunks = data.get("chunks", [])
-
-                self._doc_chunk_count = data.get(
-                    "doc_chunk_count",
-                    {},
-                )
+                self._doc_chunk_count = data.get("doc_chunk_count", {})
 
                 logger.info(
                     "Metadata loaded",
@@ -246,7 +230,7 @@ class VectorStore:
                 )
 
             logger.info(
-                "Persisted locally",
+                "Local persistence updated",
                 extra={"vectors": self._index.ntotal},
             )
 
@@ -263,12 +247,18 @@ class VectorStore:
 
     def _ensure_numpy(self, embeddings) -> np.ndarray:
 
+        if embeddings is None:
+            raise ValueError("Embeddings cannot be None")
+
         if isinstance(embeddings, list):
 
-            embeddings = np.array(
-                embeddings,
-                dtype="float32",
-            )
+            embeddings = np.array(embeddings, dtype="float32")
+
+        if embeddings.ndim == 1:
+            embeddings = embeddings.reshape(1, -1)
+
+        if embeddings.shape[1] != self._dim:
+            raise ValueError("Embedding dimension mismatch")
 
         return embeddings
 
@@ -289,7 +279,6 @@ class VectorStore:
     def add(self, embeddings, chunks: List[str], doc_id: str):
 
         embeddings = self._ensure_numpy(embeddings)
-
         embeddings = self._normalize(embeddings)
 
         points = []
@@ -318,14 +307,15 @@ class VectorStore:
         for i, chunk in enumerate(chunks):
 
             self._chunks.append({
-
                 "text": chunk,
                 "doc_id": doc_id,
                 "chunk_idx": i,
-
+                "global_idx": len(self._chunks),
             })
 
-        self._doc_chunk_count[doc_id] = len(chunks)
+        self._doc_chunk_count[doc_id] = (
+            self._doc_chunk_count.get(doc_id, 0) + len(chunks)
+        )
 
         self._save_to_disk()
 
@@ -336,17 +326,12 @@ class VectorStore:
     def query(self, embedding, top_k=TOP_K, doc_id=None):
 
         embedding = self._ensure_numpy(embedding)
-
         embedding = self._normalize(embedding)
 
         hits = self._qdrant._client.search(
-
             collection_name=QDRANT_COLLECTION,
-
             query_vector=embedding[0].tolist(),
-
             limit=top_k,
-
         )
 
         results = []
@@ -359,15 +344,10 @@ class VectorStore:
                 continue
 
             results.append({
-
                 "text": payload.get("text"),
-
                 "doc_id": payload.get("doc_id"),
-
                 "chunk_idx": payload.get("chunk_idx"),
-
                 "similarity_score": float(hit.score),
-
             })
 
         return results
@@ -379,15 +359,12 @@ class VectorStore:
     def get_stats(self):
 
         return {
-
             "total_chunks": len(self._chunks),
-
             "total_vectors": self._index.ntotal,
-
             "documents": dict(self._doc_chunk_count),
-
         }
 
     def document_count(self):
 
         return len(self._doc_chunk_count)
+
