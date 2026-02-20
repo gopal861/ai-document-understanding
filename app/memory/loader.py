@@ -6,17 +6,23 @@ Unified ingestion loader for engineering documentation.
 Architecture contract preserved:
 loader → chunker → embedder → vector_store
 
+CRITICAL DESIGN RULE:
+This file MUST remain fully synchronous.
+NO asyncio usage allowed here.
+
+Async execution is handled by routes layer using executor.
+
 Supports:
 - PDF files
 - GitHub repositories
 - Raw markdown URLs
 - Static HTML docs (recursive crawl)
-- Dynamic JS-rendered docs (Playwright fallback, async-safe, Render-safe)
+- Dynamic JS-rendered docs (Playwright fallback)
 
 Production guarantees:
-- FastAPI async-safe
-- Render-safe Playwright execution
-- Thread-safe browser execution
+- FastAPI safe
+- Render safe
+- Thread safe when called from executor
 - Memory bounded
 - Crawl bounded
 """
@@ -26,8 +32,6 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 import os
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 
 from playwright.sync_api import sync_playwright
 
@@ -42,11 +46,7 @@ from app.config import (
 # ============================================================
 
 PLAYWRIGHT_BROWSER_PATH = "/opt/render/project/.playwright"
-
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = PLAYWRIGHT_BROWSER_PATH
-
-# Dedicated thread executor for Playwright
-PLAYWRIGHT_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
 # ============================================================
@@ -112,7 +112,7 @@ def load_markdown_text(file_path: str) -> str:
 
 def load_raw_markdown_url(source: str) -> str:
 
-    resp = requests.get(source, timeout=15)
+    resp = requests.get(source, timeout=20)
 
     if resp.status_code != 200:
         raise ValueError("Failed to fetch markdown")
@@ -145,15 +145,13 @@ def extract_clean_text(html: str) -> str:
 
 
 # ============================================================
-# STATIC HTML RECURSIVE CRAWLER (PRIMARY FAST PATH)
+# STATIC HTML RECURSIVE CRAWLER (FAST PATH)
 # ============================================================
 
 def load_html_docs_recursive(base_url: str) -> str:
 
     visited = set()
-
     queue = [base_url]
-
     collected = []
 
     base_domain = urlparse(base_url).netloc
@@ -171,7 +169,7 @@ def load_html_docs_recursive(base_url: str) -> str:
 
         try:
 
-            resp = requests.get(url, timeout=15)
+            resp = requests.get(url, timeout=20)
 
             if resp.status_code != 200:
                 continue
@@ -209,10 +207,10 @@ def load_html_docs_recursive(base_url: str) -> str:
 
 
 # ============================================================
-# PLAYWRIGHT EXECUTION CORE (SYNC, ISOLATED)
+# PLAYWRIGHT FALLBACK (SYNC ONLY — EXECUTOR SAFE)
 # ============================================================
 
-def _playwright_extract_sync(url: str) -> str:
+def load_dynamic_html_playwright(url: str) -> str:
 
     with sync_playwright() as p:
 
@@ -222,13 +220,16 @@ def _playwright_extract_sync(url: str) -> str:
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--single-process"
             ]
         )
 
         page = browser.new_page()
 
-        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        page.goto(
+            url,
+            timeout=60000,
+            wait_until="domcontentloaded"
+        )
 
         page.wait_for_timeout(2000)
 
@@ -236,39 +237,9 @@ def _playwright_extract_sync(url: str) -> str:
 
         browser.close()
 
-    return extract_clean_text(html)
-
-
-# ============================================================
-# PLAYWRIGHT FALLBACK (ASYNC SAFE, FASTAPI SAFE)
-# ============================================================
-
-def load_dynamic_html_playwright(url: str) -> str:
-    """
-    Async-safe Playwright execution.
-
-    Runs Playwright in dedicated thread pool to avoid
-    FastAPI asyncio event loop conflict.
-    """
-
-    try:
-
-        loop = asyncio.get_running_loop()
-
-        future = loop.run_in_executor(
-            PLAYWRIGHT_EXECUTOR,
-            _playwright_extract_sync,
-            url
-        )
-
-        text = loop.run_until_complete(future)
-
-    except RuntimeError:
-
-        # No event loop present (sync context)
-        text = _playwright_extract_sync(url)
-
-    return enforce_character_limit(text)
+    return enforce_character_limit(
+        extract_clean_text(html)
+    )
 
 
 # ============================================================
@@ -283,7 +254,7 @@ def load_github_repo_markdown(repo_url: str) -> str:
 
     api = f"https://api.github.com/repos/{owner}/{repo}"
 
-    repo_data = requests.get(api, timeout=15).json()
+    repo_data = requests.get(api, timeout=20).json()
 
     branch = repo_data["default_branch"]
 
@@ -292,7 +263,7 @@ def load_github_repo_markdown(repo_url: str) -> str:
         f"/git/trees/{branch}?recursive=1"
     )
 
-    tree = requests.get(tree_api, timeout=15).json()["tree"]
+    tree = requests.get(tree_api, timeout=20).json()["tree"]
 
     collected = []
 
@@ -311,7 +282,7 @@ def load_github_repo_markdown(repo_url: str) -> str:
             f"{owner}/{repo}/{branch}/{item['path']}"
         )
 
-        resp = requests.get(raw, timeout=15)
+        resp = requests.get(raw, timeout=20)
 
         if resp.status_code == 200:
 
@@ -326,7 +297,7 @@ def load_github_repo_markdown(repo_url: str) -> str:
 
 
 # ============================================================
-# MAIN ENTRY POINT (ARCHITECTURE CONTRACT)
+# MAIN ENTRY POINT (PURE SYNC)
 # ============================================================
 
 def load_text(source: str) -> str:
@@ -345,7 +316,6 @@ def load_text(source: str) -> str:
 
         static_text = load_html_docs_recursive(source)
 
-        # Only invoke Playwright if static crawl insufficient
         if len(static_text) < 1500:
 
             dynamic_text = load_dynamic_html_playwright(source)

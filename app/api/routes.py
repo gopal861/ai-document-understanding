@@ -5,6 +5,7 @@ import time
 import threading
 import os
 import json
+import asyncio
 
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +43,7 @@ router = APIRouter()
 
 
 # ============================================================
-# GLOBAL SINGLETONS (ARCHITECTURE CONTRACT PRESERVED)
+# GLOBAL SINGLETONS
 # ============================================================
 
 embedder = Embedder()
@@ -55,7 +56,7 @@ llm_client = MultiModelLLMClient()
 
 
 # ============================================================
-# DOCUMENT REGISTRY (PERSISTENT)
+# DOCUMENT REGISTRY
 # ============================================================
 
 DOCUMENT_REGISTRY_PATH = "storage/document_registry.json"
@@ -138,19 +139,18 @@ def save_document_registry():
         )
 
 
-# Load registry on startup
 load_document_registry()
 
 
 # ============================================================
-# INGESTION LOCK (CRITICAL SAFETY)
+# LOCK
 # ============================================================
 
 ingestion_lock = threading.Lock()
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 MAX_FILE_SIZE_MB = 10
@@ -163,29 +163,12 @@ INGESTION_RETRY_DELAY = 2
 
 
 # ============================================================
-# HELPERS
+# EXECUTOR SAFE LOADER
 # ============================================================
 
-def generate_document_id() -> str:
-    return f"doc_{uuid.uuid4().hex[:12]}"
+async def load_text_with_retry(source: str) -> str:
 
-
-def validate_file_size(content: bytes):
-
-    size_mb = len(content) / (1024 * 1024)
-
-    if size_mb > MAX_FILE_SIZE_MB:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large: {size_mb:.2f}MB",
-        )
-
-
-# ============================================================
-# FIXED FUNCTION (ONLY CHANGE)
-# ============================================================
-
-def load_text_with_retry(source: str) -> str:
+    loop = asyncio.get_running_loop()
 
     last_error = None
 
@@ -201,15 +184,16 @@ def load_text_with_retry(source: str) -> str:
                 },
             )
 
-            text = load_text(source)
+            text = await loop.run_in_executor(
+                None,
+                load_text,
+                source
+            )
 
-            # FIX: ensure silent failures are handled
             if text and text.strip():
                 return text
 
-            last_error = Exception(
-                f"No text extracted from source: {source}"
-            )
+            last_error = Exception("Empty text extracted")
 
         except Exception as e:
 
@@ -224,11 +208,10 @@ def load_text_with_retry(source: str) -> str:
                 },
             )
 
-        time.sleep(INGESTION_RETRY_DELAY)
+        await asyncio.sleep(INGESTION_RETRY_DELAY)
 
-    # FIX: always raise valid exception object
     raise Exception(
-        f"Document load failed after {INGESTION_MAX_RETRIES} attempts. Source: {source}. Error: {last_error}"
+        f"Document load failed after retries: {last_error}"
     )
 
 
@@ -250,7 +233,7 @@ def health_check():
 
 
 # ============================================================
-# UPLOAD DOCUMENT
+# UPLOAD
 # ============================================================
 
 @router.post("/upload", response_model=UploadResponse)
@@ -267,7 +250,7 @@ async def upload_document(
             detail="Provide file or URL",
         )
 
-    document_id = generate_document_id()
+    document_id = f"doc_{uuid.uuid4().hex[:12]}"
 
     start_time = time.time()
 
@@ -276,13 +259,11 @@ async def upload_document(
         if url:
 
             filename = url
-            text = load_text_with_retry(url)
+            text = await load_text_with_retry(url)
 
         else:
 
             file_bytes = await file.read()
-
-            validate_file_size(file_bytes)
 
             file_path = UPLOAD_DIR / f"{document_id}.pdf"
 
@@ -291,10 +272,7 @@ async def upload_document(
 
             filename = file.filename
 
-            text = load_text_with_retry(str(file_path))
-
-        if not text:
-            raise HTTPException(status_code=400, detail="No text extracted")
+            text = await load_text_with_retry(str(file_path))
 
         chunks = chunk_text(text)
 
@@ -317,11 +295,6 @@ async def upload_document(
         save_document_registry()
 
         latency = time.time() - start_time
-
-        logger.info(
-            "Document ingestion complete",
-            extra={"doc_id": document_id}
-        )
 
         posthog_client.track_document_upload(
             distinct_id=request.state.request_id,
@@ -350,75 +323,41 @@ async def upload_document(
 
 
 # ============================================================
-# ASK QUESTION
+# ASK
 # ============================================================
 
 @router.post("/ask", response_model=AskResponse)
 def ask_question(payload: AskRequest, request: Request):
 
-    start_time = time.time()
+    if payload.document_id not in document_registry:
 
-    try:
-
-        if payload.document_id not in document_registry:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Document not found",
-            )
-
-        def retrieve_fn(question: str, top_k: int):
-
-            results = retrieve(
-                question=question,
-                embedder=embedder,
-                store=vector_store,
-                top_k=top_k,
-                doc_id=payload.document_id,
-            )
-
-            posthog_client.track_retrieval(
-                distinct_id=request.state.request_id,
-                document_id=payload.document_id,
-                chunks_retrieved=len(results),
-                top_score=results[0]["similarity_score"] if results else None,
-            )
-
-            return results
-
-        result = answer_question(
-            question=payload.question,
-            session_id=payload.document_id,
-            retrieve_fn=retrieve_fn,
-            llm_client=llm_client,
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
         )
 
-        latency = time.time() - start_time
+    def retrieve_fn(question: str, top_k: int):
 
-        posthog_client.track_question(
-            distinct_id=request.state.request_id,
-            document_id=payload.document_id,
-            question=payload.question,
-            latency=latency,
-            success=True,
+        return retrieve(
+            question=question,
+            embedder=embedder,
+            store=vector_store,
+            top_k=top_k,
+            doc_id=payload.document_id,
         )
 
-        return AskResponse(**result)
+    result = answer_question(
+        question=payload.question,
+        session_id=payload.document_id,
+        retrieve_fn=retrieve_fn,
+        llm_client=llm_client,
+    )
 
-    except Exception as e:
-
-        posthog_client.track_error(
-            distinct_id=request.state.request_id,
-            error_type=type(e).__name__,
-            error_message=str(e),
-            endpoint="/ask",
-        )
-
-        raise
+    return AskResponse(**result)
 
 
 # ============================================================
-# LIST DOCUMENTS
+# DOCUMENTS
 # ============================================================
 
 @router.get("/documents", response_model=ListDocumentsResponse)
@@ -428,14 +367,12 @@ def list_documents():
 
     for doc_id, meta in document_registry.items():
 
-        timestamp = meta.get("upload_timestamp")
-
         documents.append(
             DocumentInfo(
                 document_id=doc_id,
-                filename=meta.get("filename"),
-                chunks_count=meta.get("chunks_count"),
-                upload_timestamp=str(timestamp) if timestamp else None,
+                filename=meta["filename"],
+                chunks_count=meta["chunks_count"],
+                upload_timestamp=str(meta["upload_timestamp"]),
             )
         )
 
@@ -447,7 +384,7 @@ def list_documents():
 
 
 # ============================================================
-# DELETE DOCUMENT
+# DELETE
 # ============================================================
 
 @router.delete("/documents/{document_id}",
@@ -473,7 +410,7 @@ def delete_document(document_id: str):
 
 
 # ============================================================
-# METRICS ENDPOINT
+# METRICS
 # ============================================================
 
 @router.get("/metrics")
