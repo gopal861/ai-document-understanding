@@ -10,8 +10,8 @@ Supports:
 - PDF files
 - GitHub repositories
 - Raw markdown URLs
-- Static HTML docs
-- Dynamic JS-rendered docs (Playwright fallback — FIXED THREAD SAFE)
+- Static HTML docs (recursive crawl)
+- Dynamic JS-rendered docs (Playwright fallback, Render-safe)
 """
 
 from pypdf import PdfReader
@@ -19,9 +19,6 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 import os
-import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 from playwright.sync_api import sync_playwright
 
@@ -31,12 +28,13 @@ from app.config import (
     MAX_HTML_PAGES,
 )
 
-
 # ============================================================
-# THREAD EXECUTOR (CRITICAL FIX)
+# GLOBAL CONFIG (Render-safe Playwright path)
 # ============================================================
 
-_playwright_executor = ThreadPoolExecutor(max_workers=2)
+PLAYWRIGHT_BROWSER_PATH = "/opt/render/project/.playwright"
+
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = PLAYWRIGHT_BROWSER_PATH
 
 
 # ============================================================
@@ -46,10 +44,9 @@ _playwright_executor = ThreadPoolExecutor(max_workers=2)
 def validate_url(source: str):
 
     parsed = urlparse(source)
-    domain = parsed.netloc
 
-    if domain not in ALLOWED_DOMAINS:
-        raise ValueError(f"Domain not allowed: {domain}")
+    if parsed.netloc not in ALLOWED_DOMAINS:
+        raise ValueError(f"Domain not allowed: {parsed.netloc}")
 
 
 # ============================================================
@@ -72,16 +69,16 @@ def load_pdf_text(file_path: str) -> str:
 
     reader = PdfReader(file_path)
 
-    text_parts = []
+    parts = []
 
     for page in reader.pages:
 
-        extracted = page.extract_text()
+        text = page.extract_text()
 
-        if extracted:
-            text_parts.append(extracted)
+        if text:
+            parts.append(text)
 
-    return enforce_character_limit("\n".join(text_parts))
+    return enforce_character_limit("\n".join(parts))
 
 
 # ============================================================
@@ -91,9 +88,7 @@ def load_pdf_text(file_path: str) -> str:
 def load_markdown_text(file_path: str) -> str:
 
     with open(file_path, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    return enforce_character_limit(text)
+        return enforce_character_limit(f.read())
 
 
 # ============================================================
@@ -105,20 +100,44 @@ def load_raw_markdown_url(source: str) -> str:
     resp = requests.get(source, timeout=15)
 
     if resp.status_code != 200:
-        raise ValueError("Failed to fetch raw markdown")
+        raise ValueError("Failed to fetch markdown")
 
     return enforce_character_limit(resp.text)
 
 
 # ============================================================
-# STATIC HTML LOADER
+# CLEAN HTML → TEXT
+# ============================================================
+
+def extract_clean_text(html: str) -> str:
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup([
+        "script",
+        "style",
+        "nav",
+        "footer",
+        "header",
+        "aside",
+        "noscript"
+    ]):
+        tag.decompose()
+
+    return soup.get_text(separator="\n").strip()
+
+
+# ============================================================
+# STATIC HTML RECURSIVE CRAWLER (FAST PATH)
 # ============================================================
 
 def load_html_docs_recursive(base_url: str) -> str:
 
     visited = set()
+
     queue = [base_url]
-    collected_text = []
+
+    collected = []
 
     base_domain = urlparse(base_url).netloc
 
@@ -138,41 +157,47 @@ def load_html_docs_recursive(base_url: str) -> str:
             if resp.status_code != 200:
                 continue
 
+            text = extract_clean_text(resp.text)
+
+            if text and len(text) > 300:
+                collected.append(text)
+
             soup = BeautifulSoup(resp.text, "html.parser")
-
-            for tag in soup(["script", "style", "nav", "footer", "header"]):
-                tag.decompose()
-
-            text = soup.get_text(separator="\n").strip()
-
-            if text:
-                collected_text.append(text)
 
             for link in soup.find_all("a", href=True):
 
                 full_url = urljoin(base_url, link["href"])
+
                 parsed = urlparse(full_url)
 
-                if parsed.netloc == base_domain and full_url not in visited:
+                if (
+                    parsed.netloc == base_domain
+                    and full_url not in visited
+                    and full_url not in queue
+                ):
                     queue.append(full_url)
 
         except Exception:
             continue
 
-    full_text = "\n\n".join(collected_text)
+        if sum(len(x) for x in collected) > MAX_DOCUMENT_CHARACTERS:
+            break
 
-    return enforce_character_limit(full_text)
+    return enforce_character_limit("\n\n".join(collected))
 
 
 # ============================================================
-# PLAYWRIGHT CORE FUNCTION (THREAD SAFE)
+# PLAYWRIGHT FALLBACK (RENDER SAFE)
 # ============================================================
 
-def _playwright_fetch(url: str) -> str:
+def load_dynamic_html_playwright(url: str) -> str:
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
 
         page = browser.new_page()
 
@@ -180,31 +205,13 @@ def _playwright_fetch(url: str) -> str:
 
         page.wait_for_timeout(2000)
 
-        content = page.content()
+        html = page.content()
 
         browser.close()
 
-    soup = BeautifulSoup(content, "html.parser")
-
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
-
-    text = soup.get_text(separator="\n").strip()
-
-    return text
-
-
-# ============================================================
-# THREAD SAFE PLAYWRIGHT LOADER
-# ============================================================
-
-def load_dynamic_html_playwright(url: str) -> str:
-
-    future = _playwright_executor.submit(_playwright_fetch, url)
-
-    text = future.result(timeout=60)
-
-    return enforce_character_limit(text)
+    return enforce_character_limit(
+        extract_clean_text(html)
+    )
 
 
 # ============================================================
@@ -215,8 +222,7 @@ def load_github_repo_markdown(repo_url: str) -> str:
 
     parts = repo_url.replace("https://github.com/", "").split("/")
 
-    owner = parts[0]
-    repo = parts[1]
+    owner, repo = parts[0], parts[1]
 
     api = f"https://api.github.com/repos/{owner}/{repo}"
 
@@ -224,7 +230,10 @@ def load_github_repo_markdown(repo_url: str) -> str:
 
     branch = repo_data["default_branch"]
 
-    tree_api = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+    tree_api = (
+        f"https://api.github.com/repos/{owner}/{repo}"
+        f"/git/trees/{branch}?recursive=1"
+    )
 
     tree = requests.get(tree_api).json()["tree"]
 
@@ -238,18 +247,24 @@ def load_github_repo_markdown(repo_url: str) -> str:
         if not item["path"].endswith((".md", ".py", ".ipynb")):
             continue
 
-        raw = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{item['path']}"
+        raw = (
+            f"https://raw.githubusercontent.com/"
+            f"{owner}/{repo}/{branch}/{item['path']}"
+        )
 
         resp = requests.get(raw)
 
         if resp.status_code == 200:
             collected.append(resp.text)
 
+        if sum(len(x) for x in collected) > MAX_DOCUMENT_CHARACTERS:
+            break
+
     return enforce_character_limit("\n\n".join(collected))
 
 
 # ============================================================
-# MAIN ENTRY POINT
+# MAIN ENTRY POINT (ARCHITECTURE CONTRACT)
 # ============================================================
 
 def load_text(source: str) -> str:
@@ -268,10 +283,15 @@ def load_text(source: str) -> str:
 
         text = load_html_docs_recursive(source)
 
-        if not text or len(text.strip()) < 500:
-            text = load_dynamic_html_playwright(source)
+        # fallback if insufficient content
+        if len(text) < 1000:
 
-        return text
+            dynamic_text = load_dynamic_html_playwright(source)
+
+            if len(dynamic_text) > len(text):
+                text = dynamic_text
+
+        return enforce_character_limit(text)
 
     if source.lower().endswith(".pdf"):
         return load_pdf_text(source)
