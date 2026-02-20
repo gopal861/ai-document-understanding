@@ -33,7 +33,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 # ========== RETRIEVAL CONFIGURATION ==========
 
 # Retrieval depth 
-TOP_K = 15 # Number of chunks to retrieve
+TOP_K = 8 # Number of chunks to retrieve
 
 # Similarity threshold for refusal 
 SIMILARITY_THRESHOLD = 0.45
