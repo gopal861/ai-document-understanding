@@ -64,6 +64,10 @@ DOCUMENT_REGISTRY_PATH = "storage/document_registry.json"
 document_registry: Dict[str, dict] = {}
 
 
+# ============================================================
+# LOAD REGISTRY FROM DISK
+# ============================================================
+
 def load_document_registry():
 
     global document_registry
@@ -85,11 +89,15 @@ def load_document_registry():
 
             if timestamp:
                 try:
-                    meta["upload_timestamp"] = datetime.fromisoformat(timestamp)
+                    timestamp = datetime.fromisoformat(timestamp)
                 except Exception:
-                    meta["upload_timestamp"] = None
+                    timestamp = None
 
-            restored[doc_id] = meta
+            restored[doc_id] = {
+                "filename": meta.get("filename", doc_id),
+                "chunks_count": meta.get("chunks_count", 0),
+                "upload_timestamp": timestamp,
+            }
 
         document_registry.clear()
         document_registry.update(restored)
@@ -106,6 +114,49 @@ def load_document_registry():
             extra={"error": str(e)}
         )
 
+
+# ============================================================
+# CRITICAL FIX: REBUILD REGISTRY FROM VECTOR STORE
+# ============================================================
+
+def rebuild_registry_from_vector_store():
+
+    global document_registry
+
+    stats = vector_store.get_stats()
+
+    documents = stats.get("documents", {})
+
+    rebuilt_count = 0
+
+    for doc_id, chunk_count in documents.items():
+
+        if doc_id not in document_registry:
+
+            document_registry[doc_id] = {
+                "filename": doc_id,
+                "chunks_count": chunk_count,
+                "upload_timestamp": None,
+            }
+
+            rebuilt_count += 1
+
+    if rebuilt_count > 0:
+
+        save_document_registry()
+
+        logger.info(
+            "Registry rebuilt from vector store",
+            extra={
+                "rebuilt_documents": rebuilt_count,
+                "total_documents": len(document_registry),
+            },
+        )
+
+
+# ============================================================
+# SAVE REGISTRY
+# ============================================================
 
 def save_document_registry():
 
@@ -139,7 +190,14 @@ def save_document_registry():
         )
 
 
+# ============================================================
+# INITIALIZE REGISTRY CORRECTLY
+# ============================================================
+
 load_document_registry()
+
+# CRITICAL FIX — rebuild from vector store
+rebuild_registry_from_vector_store()
 
 
 # ============================================================
