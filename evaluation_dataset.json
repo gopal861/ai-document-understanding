@@ -1,0 +1,129 @@
+[
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What is the Gemini API?",
+    "expected_answer_contains": ["API", "Gemini"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What does the generateContent endpoint do?",
+    "expected_answer_contains": ["generate", "content"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What is required to authenticate Gemini API requests?",
+    "expected_answer_contains": ["API key"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "Does Gemini API support streaming responses?",
+    "expected_answer_contains": ["stream"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What does the embeddings endpoint return?",
+    "expected_answer_contains": ["embedding", "vector"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What is the purpose of the Gemini Live API?",
+    "expected_answer_contains": ["real-time", "stream"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "What programming languages are supported by the Gemini SDK?",
+    "expected_answer_contains": ["Python"]
+  },
+  {
+    "document_id": "doc_794450cd0500",
+    "question": "Can Gemini API generate multimodal outputs?",
+    "expected_answer_contains": ["image", "text"]
+  },
+
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What is FastAPI?",
+    "expected_answer_contains": ["framework", "API"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "Is FastAPI asynchronous?",
+    "expected_answer_contains": ["async"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What is a path operation in FastAPI?",
+    "expected_answer_contains": ["endpoint"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What does FastAPI use for data validation?",
+    "expected_answer_contains": ["Pydantic"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "Does FastAPI support async functions?",
+    "expected_answer_contains": ["async"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What generates automatic API documentation in FastAPI?",
+    "expected_answer_contains": ["OpenAPI", "docs"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What is dependency injection in FastAPI?",
+    "expected_answer_contains": ["dependency"]
+  },
+  {
+    "document_id": "doc_ee25b75aac91",
+    "question": "What standard does FastAPI use for automatic API schema generation?",
+    "expected_answer_contains": ["OpenAPI"]
+  },
+
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What is the OpenAI Python library?",
+    "expected_answer_contains": ["OpenAI", "library"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "How do you install the OpenAI Python package?",
+    "expected_answer_contains": ["install"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What does the OpenAI client provide?",
+    "expected_answer_contains": ["client"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "Does OpenAI provide a Python SDK?",
+    "expected_answer_contains": ["Python"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What is required to use the OpenAI API?",
+    "expected_answer_contains": ["API key"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "How does the OpenAI Python library interact with the OpenAI API?",
+    "expected_answer_contains": ["API"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What capabilities does the OpenAI client enable?",
+    "expected_answer_contains": ["client"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What type of authentication does the OpenAI API use?",
+    "expected_answer_contains": ["API key"]
+  },
+  {
+    "document_id": "doc_a58c4a2119db",
+    "question": "What is the main purpose of the OpenAI Python SDK?",
+    "expected_answer_contains": ["API", "client"]
+  }
+]

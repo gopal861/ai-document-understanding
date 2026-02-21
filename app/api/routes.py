@@ -307,6 +307,15 @@ async def upload_document(
             status_code=400,
             detail="Provide file or URL",
         )
+     
+    if file:
+        content_length = request.headers.get("content-length")
+
+        if content_length and int(content_length) > MAX_FILE_SIZE_MB * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Max allowed: {MAX_FILE_SIZE_MB}MB"
+            )
 
     document_id = f"doc_{uuid.uuid4().hex[:12]}"
 
@@ -452,19 +461,23 @@ def delete_document(document_id: str):
     if document_id not in document_registry:
 
         raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
+          status_code=404,
+           detail="Document not found",
+       )
 
+    # CRITICAL FIX — delete from vector store (Qdrant + FAISS + RAM)
+    vector_store.delete_document(document_id)
+
+    # remove from registry
     del document_registry[document_id]
 
     save_document_registry()
 
     return DeleteDocumentResponse(
-        document_id=document_id,
-        message="Deleted",
-        success=True,
-    )
+    document_id=document_id,
+    message="Deleted",
+    success=True,
+)
 
 
 # ============================================================

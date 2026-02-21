@@ -58,11 +58,6 @@ LLM_MAX_TOKENS = 500  # Limit response length
 
 # ========== SYSTEM CONSTRAINTS ==========
 
-# Latency target 
-TARGET_LATENCY_SECONDS = 2.0
-
-
-
 
 # Memory limits
 MAX_DOCUMENTS_IN_MEMORY = 100  # Safety limit for single-instance deployment

@@ -1,0 +1,272 @@
+[
+  {
+    "question": "What is the Gemini API?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 23.99054503440857,
+    "sources_used": 15
+  },
+  {
+    "question": "What does the generateContent endpoint do?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 8.570260047912598,
+    "sources_used": 15
+  },
+  {
+    "question": "What is required to authenticate requests to Gemini API?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.0833333333333333,
+    "grounded": true,
+    "latency": 5.863264560699463,
+    "sources_used": 13
+  },
+  {
+    "question": "Does Gemini API support streaming responses?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.1666666666666667,
+    "grounded": true,
+    "latency": 7.890671968460083,
+    "sources_used": 14
+  },
+  {
+    "question": "What is the purpose of embeddings in Gemini API?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 0.5,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 16.28927779197693,
+    "sources_used": 15
+  },
+  {
+    "question": "Can Gemini API generate multimodal content?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 0.6666666666666666,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 5.794072866439819,
+    "sources_used": 15
+  },
+  {
+    "question": "What programming languages are supported by Gemini SDK?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.1666666666666667,
+    "grounded": true,
+    "latency": 5.700595378875732,
+    "sources_used": 14
+  },
+  {
+    "question": "What is batch processing in Gemini API?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.0833333333333333,
+    "grounded": true,
+    "latency": 18.614216566085815,
+    "sources_used": 13
+  },
+  {
+    "question": "What does the embeddings endpoint return?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 5.771973609924316,
+    "sources_used": 6
+  },
+  {
+    "question": "What is the Live API used for?",
+    "document_id": "doc_794450cd0500",
+    "accuracy_score": 0.0,
+    "retrieval_precision": 0.16666666666666666,
+    "grounded": false,
+    "latency": 1.9030463695526123,
+    "sources_used": 2
+  },
+  {
+    "question": "What is FastAPI?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 9.912662267684937,
+    "sources_used": 15
+  },
+  {
+    "question": "Is FastAPI asynchronous?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 11.54512071609497,
+    "sources_used": 15
+  },
+  {
+    "question": "What is a path operation in FastAPI?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 14.430501699447632,
+    "sources_used": 15
+  },
+  {
+    "question": "What does FastAPI use for data validation?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 13.010448932647705,
+    "sources_used": 15
+  },
+  {
+    "question": "What is request validation?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 0.0,
+    "retrieval_precision": 0.0,
+    "grounded": false,
+    "latency": 1.9699516296386719,
+    "sources_used": 0
+  },
+  {
+    "question": "Does FastAPI support async functions?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 6.097652196884155,
+    "sources_used": 15
+  },
+  {
+    "question": "What does automatic documentation provide?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 0.0,
+    "retrieval_precision": 0.5,
+    "grounded": false,
+    "latency": 1.8221149444580078,
+    "sources_used": 6
+  },
+  {
+    "question": "What is dependency injection in FastAPI?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 5.536356210708618,
+    "sources_used": 15
+  },
+  {
+    "question": "What is an API endpoint?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 0.0,
+    "retrieval_precision": 1.0,
+    "grounded": false,
+    "latency": 1.5946829319000244,
+    "sources_used": 12
+  },
+  {
+    "question": "Why is FastAPI fast?",
+    "document_id": "doc_ee25b75aac91",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 1.25,
+    "grounded": true,
+    "latency": 13.121620893478394,
+    "sources_used": 15
+  },
+  {
+    "question": "What is the OpenAI Python library?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 5.761709451675415,
+    "sources_used": 6
+  },
+  {
+    "question": "How do you install the OpenAI Python package?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.4166666666666667,
+    "grounded": true,
+    "latency": 4.260110378265381,
+    "sources_used": 5
+  },
+  {
+    "question": "What does the OpenAI client provide?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 12.770087480545044,
+    "sources_used": 6
+  },
+  {
+    "question": "What can you do with OpenAI API?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 14.961941480636597,
+    "sources_used": 6
+  },
+  {
+    "question": "Does OpenAI provide Python SDK?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 4.161584854125977,
+    "sources_used": 6
+  },
+  {
+    "question": "What is required to use OpenAI API?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 6.011853456497192,
+    "sources_used": 6
+  },
+  {
+    "question": "What does the client allow developers to do?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 0.0,
+    "retrieval_precision": 0.08333333333333333,
+    "grounded": false,
+    "latency": 1.9199204444885254,
+    "sources_used": 1
+  },
+  {
+    "question": "What can developers build using OpenAI?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.16666666666666666,
+    "grounded": true,
+    "latency": 4.499950885772705,
+    "sources_used": 2
+  },
+  {
+    "question": "How does OpenAI Python library interact with API?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.5,
+    "grounded": true,
+    "latency": 19.539512872695923,
+    "sources_used": 6
+  },
+  {
+    "question": "What is OpenAI used for?",
+    "document_id": "doc_a58c4a2119db",
+    "accuracy_score": 1.0,
+    "retrieval_precision": 0.3333333333333333,
+    "grounded": true,
+    "latency": 4.473753929138184,
+    "sources_used": 4
+  }
+]
