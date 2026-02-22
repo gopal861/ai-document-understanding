@@ -7,7 +7,13 @@ import uuid
 
 from typing import List, Dict, Optional
 
-from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.http.models import (
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+    FilterSelector,   # ✅ REQUIRED FIX
+)
 
 from app.config import (
     MAX_CHUNKS_PER_DOCUMENT,
@@ -68,17 +74,17 @@ class VectorStore:
 
 
     # ============================================================
-    # DELETE DOCUMENT (CRITICAL FIX)
+    # DELETE DOCUMENT (FIXED — QDRANT DELETE NOW WORKS CORRECTLY)
     # ============================================================
 
     def delete_document(self, doc_id: str):
         """
         Fully deletes document from:
 
-        - Qdrant
-        - FAISS
-        - RAM
-        - Disk
+        - Qdrant (Cloud source of truth)
+        - FAISS (local index)
+        - RAM (runtime metadata)
+        - Disk (persistent cache)
 
         Safe, atomic, production-grade.
         """
@@ -94,25 +100,36 @@ class VectorStore:
 
         try:
 
-            # 1. Delete from Qdrant
-            self._qdrant._client.delete(
+            # ====================================================
+            # FIX: Use FilterSelector wrapper (REQUIRED BY QDRANT)
+            # ====================================================
+
+            delete_result = self._qdrant._client.delete(
                 collection_name=QDRANT_COLLECTION,
-                points_selector=Filter(
-                    must=[
-                        FieldCondition(
-                            key="doc_id",
-                            match=MatchValue(value=doc_id)
-                        )
-                    ]
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="doc_id",
+                                match=MatchValue(value=doc_id)
+                            )
+                        ]
+                    )
                 )
             )
 
             logger.info(
                 "Deleted vectors from Qdrant",
-                extra={"doc_id": doc_id}
+                extra={
+                    "doc_id": doc_id,
+                    "delete_result": str(delete_result),
+                }
             )
 
-            # 2. Remove from RAM
+            # ====================================================
+            # Remove from RAM
+            # ====================================================
+
             remaining_chunks = []
             vectors_to_keep = []
 
@@ -121,10 +138,12 @@ class VectorStore:
                 if chunk["doc_id"] != doc_id:
 
                     remaining_chunks.append(chunk)
-
                     vectors_to_keep.append(i)
 
-            # rebuild FAISS
+            # ====================================================
+            # Rebuild FAISS index safely
+            # ====================================================
+
             if vectors_to_keep:
 
                 new_index = faiss.IndexFlatIP(self._dim)
@@ -134,7 +153,6 @@ class VectorStore:
                 for i in vectors_to_keep:
 
                     vec = self._index.reconstruct(i)
-
                     old_vectors.append(vec)
 
                 vectors_np = np.vstack(old_vectors)
@@ -151,11 +169,14 @@ class VectorStore:
 
             del self._doc_chunk_count[doc_id]
 
-            # 3. Persist
+            # ====================================================
+            # Persist to disk
+            # ====================================================
+
             self._save_to_disk()
 
             logger.info(
-                "Document fully deleted",
+                "Document fully deleted from all layers",
                 extra={"doc_id": doc_id}
             )
 
@@ -226,9 +247,7 @@ class VectorStore:
                 if vectors:
 
                     vectors_np = np.vstack(vectors)
-
                     vectors_np = self._normalize(vectors_np)
-
                     self._index.add(vectors_np)
 
                 if scroll_offset is None:
@@ -252,11 +271,8 @@ class VectorStore:
         if os.path.exists(self._INDEX_PATH):
 
             try:
-
                 self._index = faiss.read_index(self._INDEX_PATH)
-
             except Exception:
-
                 self._index = None
 
         if os.path.exists(self._METADATA_PATH):
@@ -264,14 +280,12 @@ class VectorStore:
             try:
 
                 with open(self._METADATA_PATH, "r") as f:
-
                     data = json.load(f)
 
                 self._chunks = data.get("chunks", [])
                 self._doc_chunk_count = data.get("doc_chunk_count", {})
 
             except Exception:
-
                 pass
 
 
@@ -397,4 +411,3 @@ class VectorStore:
             "total_vectors": self._index.ntotal,
             "documents": dict(self._doc_chunk_count),
         }
-
